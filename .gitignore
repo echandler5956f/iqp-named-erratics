@@ -1,0 +1,5 @@
+*/node_modules
+.cursorrules
+.cursor
+*/__pycache__
+*.pyc

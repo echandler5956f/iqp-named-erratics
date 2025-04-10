@@ -25,6 +25,7 @@ if (missingEnvVars.length > 0) {
 const { initializeDatabase } = require('./utils/dbInit');
 const erraticRoutes = require('./routes/erraticRoutes');
 const authRoutes = require('./routes/authRoutes');
+const analysisRoutes = require('./routes/analysisRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,6 +37,7 @@ app.use(express.json());
 // Routes
 app.use('/api/erratics', erraticRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/analysis', analysisRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
@@ -71,6 +73,8 @@ app.get('/', (req, res) => {
               <li><code>GET /api/erratics</code> - Get all erratics</li>
               <li><code>GET /api/erratics/:id</code> - Get a specific erratic by ID</li>
               <li><code>GET /api/erratics/nearby?lat=X&lng=Y&radius=Z</code> - Get erratics near a location</li>
+              <li><code>GET /api/analysis/proximity/:id</code> - Get proximity analysis for an erratic</li>
+              <li><code>POST /api/analysis/proximity/batch</code> - Run batch proximity analysis (admin only)</li>
             </ul>
           </div>
         </body>
