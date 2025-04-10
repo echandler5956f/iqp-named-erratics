@@ -1,0 +1,139 @@
+.map-container {
+  position: relative;
+  height: 100vh;
+  width: 100%;
+}
+
+.erratic-popup {
+  min-width: 200px;
+  max-width: 300px;
+}
+
+.erratic-popup h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 1.2rem;
+  color: #2d3748;
+}
+
+.erratic-image {
+  width: 100%;
+  max-height: 150px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.erratic-details p {
+  margin: 4px 0;
+  font-size: 0.9rem;
+}
+
+.view-details-btn {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background-color: #4a5568;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+}
+
+.view-details-btn:hover {
+  background-color: #2d3748;
+}
+
+.erratic-sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 350px;
+  height: 100%;
+  background-color: white;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.erratic-sidebar h2 {
+  margin-top: 10px;
+  margin-bottom: 15px;
+  color: #2d3748;
+  font-size: 1.5rem;
+}
+
+.close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #4a5568;
+}
+
+.erratic-full-image {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
+
+.erratic-full-details p {
+  margin: 8px 0;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.detail-section {
+  margin: 15px 0;
+}
+
+.detail-section h3 {
+  margin-bottom: 5px;
+  font-size: 1.1rem;
+  color: #4a5568;
+}
+
+.coordinates {
+  margin-top: 20px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 1.2rem;
+  color: #4a5568;
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+.error {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 1.2rem;
+  color: #e53e3e;
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+/* Responsive styles */
+@media screen and (max-width: 768px) {
+  .erratic-sidebar {
+    width: 100%;
+    height: 50%;
+    top: 50%;
+    bottom: 0;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+  }
+} 

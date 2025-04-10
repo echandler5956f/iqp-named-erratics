@@ -1,0 +1,5 @@
+.login-page {
+  min-height: 100vh;
+  background-color: #f7fafc;
+  padding-top: 60px; /* To account for fixed header */
+} 

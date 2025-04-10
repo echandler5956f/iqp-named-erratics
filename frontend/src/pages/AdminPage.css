@@ -1,0 +1,161 @@
+.admin-page {
+  min-height: 100vh;
+  background-color: #f7fafc;
+}
+
+.admin-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 80px 20px 50px;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.admin-header h1 {
+  color: #2d3748;
+  margin: 0;
+}
+
+.admin-controls {
+  display: flex;
+  align-items: center;
+}
+
+.user-info {
+  margin-right: 20px;
+  color: #4a5568;
+}
+
+.logout-button {
+  padding: 8px 16px;
+  background-color: #e53e3e;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.logout-button:hover {
+  background-color: #c53030;
+}
+
+.error-message {
+  background-color: #fed7d7;
+  color: #c53030;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.admin-actions {
+  display: flex;
+  margin-bottom: 30px;
+}
+
+.action-button {
+  padding: 10px 20px;
+  background-color: #4a5568;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 10px;
+  transition: background-color 0.2s;
+}
+
+.action-button:hover {
+  background-color: #2d3748;
+}
+
+.erratic-list-container {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  padding: 20px;
+}
+
+.erratic-list-container h2 {
+  color: #4a5568;
+  margin-top: 0;
+  margin-bottom: 20px;
+}
+
+.erratic-list table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.erratic-list th,
+.erratic-list td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.erratic-list th {
+  background-color: #f7fafc;
+  color: #4a5568;
+  font-weight: 600;
+}
+
+.erratic-list tr:last-child td {
+  border-bottom: none;
+}
+
+.action-cell {
+  white-space: nowrap;
+}
+
+.table-action-btn {
+  padding: 6px 12px;
+  margin-right: 8px;
+  background-color: #4299e1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.table-action-btn.delete {
+  background-color: #e53e3e;
+}
+
+.table-action-btn:hover {
+  opacity: 0.9;
+}
+
+.no-data {
+  text-align: center;
+  color: #a0aec0;
+  padding: 30px 0;
+}
+
+.loading-message {
+  text-align: center;
+  padding: 50px 0;
+  font-size: 1.2rem;
+  color: #4a5568;
+}
+
+/* Responsive styles */
+@media screen and (max-width: 768px) {
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .admin-header h1 {
+    margin-bottom: 15px;
+  }
+  
+  .erratic-list {
+    overflow-x: auto;
+  }
+} 
