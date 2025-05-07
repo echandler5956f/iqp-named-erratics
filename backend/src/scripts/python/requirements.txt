@@ -24,6 +24,9 @@ shapely>=1.8.0
 pyproj>=3.3.0
 rtree>=1.0.0
 
+# Added for DEM processing
+rasterio
+
 # After pip installing these packages, run: 
 # python -m spacy download en_core_web_md
 # python -m spacy download en_core_web_lg

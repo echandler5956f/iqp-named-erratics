@@ -22,6 +22,7 @@ from io import BytesIO
 import hashlib
 import pyarrow.feather as feather
 from dotenv import load_dotenv, find_dotenv
+import subprocess # Added for ogr2ogr
 try:
     from shapely.wkb import loads as wkb_loads, dumps as wkb_dumps
 except ImportError:
@@ -171,6 +172,64 @@ def _load_gdf_from_cache(cache_filepath: str, source_filepath: str) -> Optional[
     return None
 
 # --- End Caching Helper Functions ---
+
+# --- PBF Processing Helper ---
+def _process_osm_pbf_with_ogr(pbf_filepath: str, output_geojson_path: str, osm_entity_type: str, target_layer_name: str, sql_filter: str) -> bool:
+    """
+    Process an OSM PBF file using ogr2ogr to extract features into GeoJSON.
+    Requires ogr2ogr to be installed and in the system PATH.
+
+    Args:
+        pbf_filepath: Path to the input PBF file.
+        output_geojson_path: Path to save the output GeoJSON file.
+        osm_entity_type: OSM layer type (e.g., 'points', 'lines', 'multilinestrings', 'multipolygons').
+        target_layer_name: A name for the layer within the GeoJSON (can be arbitrary).
+        sql_filter: SQL WHERE clause to filter features (e.g., "highway IS NOT NULL").
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(output_geojson_path), exist_ok=True)
+
+    command = [
+        'ogr2ogr',
+        '-f', 'GeoJSON',
+        output_geojson_path,
+        pbf_filepath,
+        osm_entity_type,  
+        '-sql', f"SELECT osm_id, name, other_tags, highway, place FROM {osm_entity_type} WHERE {sql_filter}", 
+        '-nln', target_layer_name, 
+        '-lco', 'WRITE_BBOX=YES',
+        '-lco', 'RFC7946=YES',
+        '-dim', '2' 
+    ]
+
+    logger.info(f"Executing ogr2ogr command: {' '.join(command)}")
+    try:
+        if os.path.exists(output_geojson_path):
+            os.remove(output_geojson_path)
+            
+        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+        logger.info(f"ogr2ogr processing successful for {osm_entity_type} to {output_geojson_path}.")
+        if result.stderr:
+            logger.debug(f"ogr2ogr stderr for {output_geojson_path}:\n{result.stderr}")
+        return True
+    except FileNotFoundError:
+        logger.error("ogr2ogr command not found. Please ensure GDAL/OGR is installed and in your system PATH.")
+        return False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ogr2ogr processing failed for {osm_entity_type} to {output_geojson_path}.")
+        logger.error(f"Command: {' '.join(e.cmd)}")
+        logger.error(f"Return code: {e.returncode}")
+        logger.error(f"Output (stdout):\n{e.stdout}")
+        logger.error(f"Output (stderr):\n{e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during ogr2ogr processing for {output_geojson_path}: {e}")
+        return False
+
+# --- End PBF Processing Helper ---
 
 def get_db_connection():
     """Establish a connection to the PostgreSQL database using environment variables or a .env file."""
@@ -716,50 +775,89 @@ def load_native_territories() -> gpd.GeoDataFrame:
 
 def load_colonial_settlements() -> gpd.GeoDataFrame:
     """
-    Load historical colonial settlement data for North America
+    Load historical colonial settlement data for North America from NHGIS.
+    It attempts to find a suitable shapefile (e.g., for 'places') within the downloaded NHGIS zip.
+    Uses caching via load_gis_data.
     
     Returns:
-        GeoDataFrame with colonial settlements
+        GeoDataFrame with colonial settlements, or a fallback if loading fails.
     """
-    # Try to load from NHGIS data
     data_key = 'nhgis_historical'
-    target_dir = download_and_extract_data(data_key)
+    
+    # Define a representative filename for caching purposes, even if it's from a zip.
+    # This helps _get_cache_path generate a consistent name for the *processed* data.
+    # We'll use a placeholder name reflecting the source and expected content.
+    # The actual shapefile name from the zip might vary.
+    placeholder_source_file_for_cache = os.path.join(GIS_DATA_DIR, 'colonial', data_key, "nhgis_colonial_settlements_processed.shp")
+    cache_filepath = _get_cache_path(placeholder_source_file_for_cache)
+
+    # Try loading from cache first (if this function was successfully run before)
+    # Note: source_filepath for _load_gdf_from_cache here is a bit conceptual,
+    # as the "true" source is a file within a zip. We use the placeholder for consistency.
+    # The cache validity will primarily depend on its existence.
+    cached_gdf = _load_gdf_from_cache(cache_filepath, placeholder_source_file_for_cache)
+    if cached_gdf is not None:
+        logger.info(f"Loaded colonial settlements from cache: {cache_filepath}")
+        return cached_gdf
+
+    logger.info("Attempting to load colonial settlements from NHGIS data.")
+    target_dir = download_and_extract_data(data_key) # Downloads and extracts the zip
     
     if not target_dir:
-        logger.warning("Failed to download NHGIS data, using fallback colonial settlement data")
-        return _create_fallback_colonial_settlements()
+        logger.warning("Failed to download or extract NHGIS data. Using fallback colonial settlement data.")
+        fallback_gdf = _create_fallback_colonial_settlements()
+        # Cache the fallback GDF using the same cache path
+        _cache_gdf(fallback_gdf.copy(), cache_filepath)
+        return fallback_gdf
     
-    # Search for settlement shapefiles in the NHGIS data
-    settlement_files = []
+    # Search for a plausible settlement/place shapefile in the NHGIS data
+    # NHGIS files for places often contain '_place_' in their names.
+    # This is an educated guess; the user might need to specify a more exact file/pattern.
+    settlement_shapefile = None
     for root, _, files in os.walk(target_dir):
         for file in files:
-            if file.endswith('.shp') and ('settlement' in file.lower() or 'town' in file.lower() or 'city' in file.lower()):
-                settlement_files.append(os.path.join(root, file))
-    
-    if not settlement_files:
-        logger.warning("No settlement shapefiles found in NHGIS data")
-        return _create_fallback_colonial_settlements()
-    
-    # Load and combine shapefiles
-    gdfs = []
-    for file in settlement_files[:5]:  # Limit to first 5 to avoid loading too much
-        try:
-            gdf = gpd.read_file(file)
-            gdfs.append(gdf)
-        except Exception as e:
-            logger.error(f"Error loading {file}: {e}")
-    
-    if not gdfs:
-        logger.warning("No settlement data loaded from NHGIS files")
-        return _create_fallback_colonial_settlements()
-    
+            # Prioritize files that seem to represent point data for places/settlements
+            if file.endswith('.shp') and ('_place_' in file.lower() or 'places' in file.lower() or 'settlements' in file.lower()):
+                settlement_shapefile = os.path.join(root, file)
+                logger.info(f"Found potential NHGIS settlement shapefile: {settlement_shapefile}")
+                break  # Use the first one found
+        if settlement_shapefile:
+            break
+            
+    if not settlement_shapefile:
+        logger.warning(f"No suitable settlement shapefile (e.g., containing '_place_') found in NHGIS data at {target_dir}. Using fallback.")
+        fallback_gdf = _create_fallback_colonial_settlements()
+        _cache_gdf(fallback_gdf.copy(), cache_filepath)
+        return fallback_gdf
+
+    # Load the identified shapefile using load_gis_data (which handles its own caching layer based on this specific file)
+    # However, for the primary function's caching (load_colonial_settlements), we use 'placeholder_source_file_for_cache'
     try:
-        # Combine all dataframes
-        combined_gdf = pd.concat(gdfs)
-        return combined_gdf
+        logger.info(f"Loading settlement data from NHGIS shapefile: {settlement_shapefile}")
+        gdf = load_gis_data(settlement_shapefile) # This will cache based on settlement_shapefile
+        
+        if gdf.empty:
+            logger.warning(f"Loaded NHGIS settlement shapefile {settlement_shapefile} is empty. Using fallback.")
+            fallback_gdf = _create_fallback_colonial_settlements()
+            _cache_gdf(fallback_gdf.copy(), cache_filepath) # Cache fallback under the main function's key
+            return fallback_gdf
+
+        # Ensure CRS is what we expect (load_gis_data should handle this, but double check)
+        if gdf.crs is None:
+            gdf.crs = "EPSG:4326"
+        elif str(gdf.crs).lower() != "epsg:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+
+        # Successfully loaded and processed, now cache it under the main function's cache key
+        _cache_gdf(gdf.copy(), cache_filepath)
+        logger.info(f"Successfully loaded and cached colonial settlements from {settlement_shapefile} to {cache_filepath}")
+        return gdf
+        
     except Exception as e:
-        logger.error(f"Error combining settlement data: {e}")
-        return _create_fallback_colonial_settlements()
+        logger.error(f"Error loading or processing NHGIS settlement shapefile {settlement_shapefile}: {e}. Using fallback.")
+        fallback_gdf = _create_fallback_colonial_settlements()
+        _cache_gdf(fallback_gdf.copy(), cache_filepath)
+        return fallback_gdf
 
 def _create_fallback_colonial_settlements() -> gpd.GeoDataFrame:
     """
@@ -821,7 +919,7 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
     Returns:
         GeoDataFrame with colonial roads
     """
-    # Create a fallback colonial roads function in case loading fails
+    # Inner function for fallback data generation
     def _create_fallback_colonial_roads() -> gpd.GeoDataFrame:
         # Simple fallback with major colonial roads
         roads_data = {
@@ -857,202 +955,241 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
                 geometry='geometry',
                 crs="EPSG:4326"
             )
-    
+
     data_key = 'colonial_roads'
-    # Try to determine the final path
-    target_dir_base = os.path.join(GIS_DATA_DIR, 'roads', data_key)
-    expected_filename = 'roads_colonial_era.geojson'
-    expected_filepath = os.path.join(target_dir_base, expected_filename)
+    # The expected filename is the basename of the URL.
+    expected_filename = os.path.basename(DATA_URLS[data_key]) # e.g., 'roads_colonial_era.geojson'
     
-    # Check cache first - even if source doesn't exist yet
+    # Define the path where the file is expected to be after download_and_extract_data
+    # download_and_extract_data places it in GIS_DATA_DIR/roads/colonial_roads/<filename>
+    expected_data_dir = os.path.join(GIS_DATA_DIR, 'roads', data_key)
+    expected_filepath = os.path.join(expected_data_dir, expected_filename)
+    
+    # Cache path is based on this expected final file path
     cache_filepath = _get_cache_path(expected_filepath)
+    
+    # Try loading from cache first
     cached_gdf = _load_gdf_from_cache(cache_filepath, expected_filepath)
     if cached_gdf is not None:
+        logger.info(f"Loaded colonial roads from cache: {cache_filepath}")
         return cached_gdf
 
-    # Try to download/extract if needed
-    logger.info(f"Attempting to download colonial roads data")
-    target_dir = download_and_extract_data(data_key)
-    if not target_dir:
-        logger.warning("Failed to download colonial roads data, using fallback")
+    logger.info(f"Attempting to download and load colonial roads data from source: {DATA_URLS[data_key]}")
+    
+    # download_and_extract_data will download the file into expected_data_dir if it's a direct link like GeoJSON
+    # It returns the path to the directory `data_key` (e.g., .../gis/roads/colonial_roads)
+    download_target_dir = download_and_extract_data(data_key)
+    
+    if not download_target_dir:
+        logger.warning(f"Failed to download colonial roads data for key '{data_key}'. Using fallback.")
         fallback_gdf = _create_fallback_colonial_roads()
-        # Cache the fallback data for future use
+        _cache_gdf(fallback_gdf.copy(), cache_filepath) # Cache the fallback
+        return fallback_gdf
+    
+    # The actual file should be at expected_filepath
+    if not os.path.exists(expected_filepath):
+        # This case should ideally not happen if download_and_extract_data works as expected for GeoJSON
+        logger.warning(f"Colonial roads file {expected_filepath} not found after download attempt. Using fallback.")
+        fallback_gdf = _create_fallback_colonial_roads()
         _cache_gdf(fallback_gdf.copy(), cache_filepath)
         return fallback_gdf
     
-    # Check for the expected file in the download directory
-    geojson_path = os.path.join(target_dir, expected_filename)
-    if not os.path.exists(geojson_path):
-        # Look for any GeoJSON file
-        found_files = [f for f in os.listdir(target_dir) if f.endswith('.geojson')]
-        if len(found_files) == 1:
-            geojson_path = os.path.join(target_dir, found_files[0])
-            logger.info(f"Found colonial roads GeoJSON: {geojson_path}")
-        elif len(found_files) > 1:
-            # Multiple files found, use the first one
-            geojson_path = os.path.join(target_dir, found_files[0])
-            logger.warning(f"Multiple GeoJSON files found in {target_dir}, using {found_files[0]}")
-        else:
-            # No GeoJSON files found, use fallback
-            logger.warning(f"No GeoJSON files found in {target_dir}, using fallback colonial roads data")
-            fallback_gdf = _create_fallback_colonial_roads()
-            # Cache the fallback data
-            _cache_gdf(fallback_gdf.copy(), cache_filepath)
-            return fallback_gdf
-    
-    # Load the GeoJSON file
+    # Load the GeoJSON file using load_gis_data (which handles its own sub-caching based on expected_filepath)
     try:
-        gdf = load_gis_data(geojson_path)
+        logger.info(f"Loading colonial roads from: {expected_filepath}")
+        gdf = load_gis_data(expected_filepath) # This will use/create cache based on expected_filepath
+        
         if gdf.empty:
-            logger.warning("Loaded empty colonial roads dataset, using fallback data")
+            logger.warning(f"Loaded colonial roads dataset from {expected_filepath} is empty. Using fallback.")
             fallback_gdf = _create_fallback_colonial_roads()
-            _cache_gdf(fallback_gdf.copy(), cache_filepath)
+            # Cache the fallback under the main function's cache_filepath
+            _cache_gdf(fallback_gdf.copy(), cache_filepath) 
             return fallback_gdf
+        
+        # Ensure CRS (load_gis_data should handle, but good to be explicit)
+        if gdf.crs is None:
+            gdf.crs = "EPSG:4326"
+        elif str(gdf.crs).lower() != "epsg:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+
+        # Cache the successfully loaded GDF under the main function's cache_filepath
+        # This makes sure that the next call to load_colonial_roads() hits this cache.
+        _cache_gdf(gdf.copy(), cache_filepath)
+        logger.info(f"Successfully loaded and cached colonial roads from {expected_filepath} to {cache_filepath}")
         return gdf
+        
     except Exception as e:
-        logger.error(f"Error loading colonial roads from {geojson_path}: {e}")
+        logger.error(f"Error loading colonial roads from {expected_filepath}: {e}. Using fallback.")
         fallback_gdf = _create_fallback_colonial_roads()
         _cache_gdf(fallback_gdf.copy(), cache_filepath)
         return fallback_gdf
 
 def load_settlements(region: Optional[str] = 'north-america') -> gpd.GeoDataFrame:
     """
-    Load settlement data for North America using OpenStreetMap data (or fallback).
-    Attempts to use cached data first.
-    
+    Load settlement data for a specified region using OpenStreetMap PBF data,
+    processed via ogr2ogr. Falls back to simplified hardcoded data if PBF processing fails.
+    Uses a multi-level caching system (processed GeoJSON, then final GeoDataFrame).
+
     Args:
-        region: Region to load data for (default to 'north-america')
+        region: Region key ('us', 'canada', 'north-america') to load data for.
         
     Returns:
-        GeoDataFrame with settlements
+        GeoDataFrame with settlements.
     """
-    # Define a representative cache key/path for the generated fallback data based on region
-    # Using a dummy file path in the cache dir structure
-    fallback_cache_key = f"fallback_settlements_{region}.geojson" # Use .geojson suffix for consistency
-    cache_filepath = _get_cache_path(os.path.join(CACHE_DIR, fallback_cache_key), params={'region': region})
+    logger.info(f"Attempting to load settlements for region: {region}")
 
-    # Try loading from cache first
-    # Note: For generated data, there's no real source file to compare mtime against.
-    # We'll load from cache if it exists, assuming it's valid.
-    # A more complex system could involve versioning or explicit cache clearing.
+    if region == 'us':
+        pbf_data_key = 'osm_us'
+    elif region == 'canada':
+        pbf_data_key = 'osm_canada'
+    else: 
+        pbf_data_key = 'osm_north_america'
+        region = 'north-america' 
+
+    pbf_download_dir = download_and_extract_data(pbf_data_key)
+    if not pbf_download_dir:
+        logger.warning(f"Failed to download/locate PBF for {pbf_data_key}. Using fallback settlements for region '{region}'.")
+        return _create_fallback_settlements(region)
+    
+    pbf_filename = os.path.basename(DATA_URLS[pbf_data_key])
+    pbf_filepath = os.path.join(pbf_download_dir, pbf_filename)
+
+    if not os.path.exists(pbf_filepath):
+        logger.warning(f"PBF file {pbf_filepath} not found. Using fallback settlements for region '{region}'.")
+        return _create_fallback_settlements(region)
+
+    processing_version = "v1.1_ogr" 
+    settlement_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'quarter', 'neighbourhood']
+    quoted_settlement_tags = ", ".join([f"'{tag}'" for tag in settlement_tags])
+    sql_filter_points_str = f"place IN ({quoted_settlement_tags})"
+    sql_filter_polygons_str = f"place IN ({quoted_settlement_tags}) AND name IS NOT NULL"
+
+    final_gdf_cache_params = {'feature_type': 'settlements', 'region': region, 'filter_version': processing_version}
+    final_gdf_cache_filepath = _get_cache_path(pbf_filepath, params=final_gdf_cache_params)
+
+    cached_gdf = _load_gdf_from_cache(final_gdf_cache_filepath, pbf_filepath)
+    if cached_gdf is not None:
+        logger.info(f"Loaded processed settlements for region '{region}' from Feather cache: {final_gdf_cache_filepath}")
+        return cached_gdf
+
+    base_pbf_name = Path(pbf_filepath).stem
+    intermediate_geojson_points_path = os.path.join(CACHE_DIR, f"{base_pbf_name}_settlements_points_{processing_version}.geojson")
+    intermediate_geojson_polygons_path = os.path.join(CACHE_DIR, f"{base_pbf_name}_settlements_polygons_{processing_version}.geojson")
+
+    gdfs_to_combine = []
+    pbf_mtime = os.path.getmtime(pbf_filepath)
+
+    if not os.path.exists(intermediate_geojson_points_path) or os.path.getmtime(intermediate_geojson_points_path) < pbf_mtime:
+        logger.info(f"Processing PBF points for settlements ({region}) to {intermediate_geojson_points_path}...")
+        if not _process_osm_pbf_with_ogr(pbf_filepath, intermediate_geojson_points_path, 'points', f'settlements_points_{region}', sql_filter_points_str):
+            logger.warning(f"Failed to process PBF points for settlements ({region}). Will attempt polygons or fallback.")
+    if os.path.exists(intermediate_geojson_points_path):
+        try:
+            gdf_points = gpd.read_file(intermediate_geojson_points_path)
+            if not gdf_points.empty:
+                gdfs_to_combine.append(gdf_points)
+            logger.info(f"Loaded {len(gdf_points)} settlement points from {intermediate_geojson_points_path}")
+        except Exception as e:
+            logger.warning(f"Could not load GeoJSON {intermediate_geojson_points_path}: {e}")
+
+    if not os.path.exists(intermediate_geojson_polygons_path) or os.path.getmtime(intermediate_geojson_polygons_path) < pbf_mtime:
+        logger.info(f"Processing PBF multipolygons for settlements ({region}) to {intermediate_geojson_polygons_path}...")
+        if not _process_osm_pbf_with_ogr(pbf_filepath, intermediate_geojson_polygons_path, 'multipolygons', f'settlements_polygons_{region}', sql_filter_polygons_str):
+            logger.warning(f"Failed to process PBF multipolygons for settlements ({region}).")
+    if os.path.exists(intermediate_geojson_polygons_path):
+        try:
+            gdf_polygons = gpd.read_file(intermediate_geojson_polygons_path)
+            if not gdf_polygons.empty:
+                gdfs_to_combine.append(gdf_polygons)
+            logger.info(f"Loaded {len(gdf_polygons)} settlement polygons from {intermediate_geojson_polygons_path}")
+        except Exception as e:
+            logger.warning(f"Could not load GeoJSON {intermediate_geojson_polygons_path}: {e}")
+            
+    if not gdfs_to_combine:
+        logger.warning(f"No settlement features extracted from PBF for region '{region}'. Using fallback.")
+        return _create_fallback_settlements(region)
+
+    combined_gdf = pd.concat(gdfs_to_combine, ignore_index=True)
+    if 'place' not in combined_gdf.columns and 'other_tags' in combined_gdf.columns:
+        try:
+            def extract_tag(tags, key):
+                if not tags: return None
+                try:
+                    tag_dict = dict(t.split('=>') for t in tags.replace('"', '').split(','))
+                    return tag_dict.get(key)
+                except: return None
+            combined_gdf['place_type'] = combined_gdf['other_tags'].apply(lambda x: extract_tag(x, 'place'))
+        except Exception as e:
+            logger.debug(f"Could not parse 'place' from 'other_tags': {e}")
+    elif 'place' in combined_gdf.columns:
+        combined_gdf.rename(columns={'place': 'place_type'}, inplace=True)
+
+    if combined_gdf.crs is None:
+        combined_gdf.crs = "EPSG:4326"
+    elif str(combined_gdf.crs).lower() != "epsg:4326":
+        logger.info(f"Reprojecting combined settlements GDF for {region} to EPSG:4326")
+        combined_gdf = combined_gdf.to_crs("EPSG:4326")
+    
+    _cache_gdf(combined_gdf.copy(), final_gdf_cache_filepath)
+    logger.info(f"Successfully processed and cached settlements for region '{region}' to {final_gdf_cache_filepath}")
+    return combined_gdf
+
+def _create_fallback_settlements(region: str) -> gpd.GeoDataFrame: 
+    """
+    Create a fallback GeoDataFrame with simplified historical settlement data.
+    This is used if OSM PBF processing fails. Cache key now includes region.
+    """
+    logger.warning(f"OSM PBF processing for settlements failed or not available for region '{region}'. Generating and caching fallback data.")
+    
+    fallback_cache_key_filename = f"fallback_settlements_{region}.feather"
+    conceptual_source_path = os.path.join(CACHE_DIR, f"conceptual_fallback_source_{fallback_cache_key_filename}")
+    cache_filepath = _get_cache_path(conceptual_source_path, params={'region': region, 'type': 'fallback_settlements'})
+
     if os.path.exists(cache_filepath):
-         try:
-             logger.info(f"Loading fallback settlements for region '{region}' from cache: {cache_filepath}")
-             # Need to load without source file comparison
-             gdf = feather.read_feather(cache_filepath)
-             if gdf.crs is None: # Re-apply CRS if lost
-                 gdf.crs = "EPSG:4326"
-             # Ensure geometry column is set
-             if 'geometry' in gdf.columns:
+        try:
+            logger.info(f"Loading fallback settlements for region '{region}' from cache: {cache_filepath}")
+            df = feather.read_feather(cache_filepath)
+            crs = None; crs_path = cache_filepath + ".crs"
+            if os.path.exists(crs_path):
+                with open(crs_path, 'r') as f: crs = f.read().strip()
+            if '_wkb' in df.columns:
+                geom_col = 'geometry'; geom_col_path = cache_filepath + ".geom_col"
+                if os.path.exists(geom_col_path):
+                    with open(geom_col_path, 'r') as f: geom_col = f.read().strip()
+                df[geom_col] = df['_wkb'].apply(lambda wkb: wkb_loads(wkb) if wkb else None)
+                df = df.drop(columns=['_wkb'])
+                gdf = gpd.GeoDataFrame(df, geometry=geom_col, crs=crs)
+            else:
+                gdf = gpd.GeoDataFrame(df, crs=crs)
+
+            if 'geometry' in gdf.columns and isinstance(gdf.geometry, gpd.GeoSeries):
                  gdf = gdf.set_geometry('geometry')
-             elif not gdf.empty:
-                 geom_col = gdf.select_dtypes(include='geometry').columns
-                 if len(geom_col) == 1:
-                     gdf = gdf.set_geometry(geom_col[0])
-                 else:
-                     logger.warning(f"Could not determine geometry column in cached fallback settlements: {cache_filepath}")
-             return gdf
-         except Exception as e:
-             logger.error(f"Error loading fallback settlements from cache {cache_filepath}: {e}. Regenerating.")
+            elif not gdf.empty:
+                 geom_cols = [col for col in gdf.columns if isinstance(gdf[col], gpd.array.GeometryArray)]
+                 if geom_cols: gdf = gdf.set_geometry(geom_cols[0])
 
-    # --- Production code would attempt PBF processing here --- 
-    # data_key = ... (determine based on region)
-    # target_dir = download_and_extract_data(data_key)
-    # if target_dir:
-    #     pbf_file = find_pbf_file(target_dir)
-    #     if pbf_file:
-    #         try:
-    #             # Process PBF to GeoDataFrame (using osmium, etc.)
-    #             gdf = process_osm_pbf(pbf_file, feature_type='settlements') 
-    #             # Cache the processed result
-    #             processed_cache_path = _get_cache_path(pbf_file, params={'feature':'settlements'})
-    #             _cache_gdf(gdf, processed_cache_path)
-    #             return gdf
-    #         except Exception as pbf_error:
-    #             logger.error(f"Error processing PBF file {pbf_file}: {pbf_error}. Using fallback.")
-    # else: 
-    #     logger.warning(f"Failed to download OSM data for {region}. Using fallback.")
-    # --- End of hypothetical PBF processing --- 
-
-    # If PBF processing is skipped, not implemented, or failed, generate fallback
-    logger.warning(f"OSM PBF processing for settlements not implemented or failed for region '{region}'. Generating and caching fallback data.")
+            if gdf.crs is None: gdf.crs = "EPSG:4326"
+            return gdf
+        except Exception as e:
+            logger.error(f"Error loading fallback settlements from cache {cache_filepath}: {e}. Regenerating.")
     
-    # Generate the extended North American cities fallback data
     sample_data = {
-        'osm_id': list(range(1, 51)),  # 50 cities
+        'osm_id': list(range(1, 51)),
         'name': [
-            # US Major Cities
-            'New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix',
-            'Philadelphia', 'San Antonio', 'San Diego', 'Dallas', 'San Jose',
-            'Austin', 'Jacksonville', 'Fort Worth', 'Columbus', 'Charlotte',
-            'Indianapolis', 'San Francisco', 'Seattle', 'Denver', 'Boston',
-            # Canadian Major Cities
-            'Toronto', 'Montreal', 'Vancouver', 'Calgary', 'Edmonton',
-            'Ottawa', 'Winnipeg', 'Quebec City', 'Hamilton', 'Kitchener',
-            # Mexican Major Cities
-            'Mexico City', 'Guadalajara', 'Monterrey', 'Puebla', 'Tijuana',
-            'León', 'Juárez', 'Culiacán', 'Mérida', 'Hermosillo',
-            # Historical Settlements (Colonial/Native)
-            'Cahokia', 'Jamestown', 'Plymouth', 'Quebec', 'St. Augustine',
-            'Santa Fe', 'Albany', 'Tadoussac', 'Kaskaskia', 'Mobile'
+            'New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix', 'Philadelphia', 'San Antonio', 'San Diego', 'Dallas', 'San Jose',
+            'Austin', 'Jacksonville', 'Fort Worth', 'Columbus', 'Charlotte', 'Indianapolis', 'San Francisco', 'Seattle', 'Denver', 'Boston',
+            'Toronto', 'Montreal', 'Vancouver', 'Calgary', 'Edmonton', 'Ottawa', 'Winnipeg', 'Quebec City', 'Hamilton', 'Kitchener',
+            'Mexico City', 'Guadalajara', 'Monterrey', 'Puebla', 'Tijuana', 'León', 'Juárez', 'Culiacán', 'Mérida', 'Hermosillo',
+            'Cahokia', 'Jamestown', 'Plymouth', 'Quebec', 'St. Augustine', 'Santa Fe', 'Albany', 'Tadoussac', 'Kaskaskia', 'Mobile'
         ],
-        'place_type': ['city'] * 30 + ['city'] * 10 + ['historical_site', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial'], # Adjusted types
-        'longitude': [
-            # US
-            -74.006, -118.243, -87.630, -95.369, -112.074,
-            -75.165, -98.491, -117.161, -96.797, -121.895,
-            -97.733, -81.656, -97.330, -82.999, -80.843,
-            -86.158, -122.419, -122.332, -104.991, -71.059,
-            # Canada
-            -79.347, -73.588, -123.116, -114.071, -113.323,
-            -75.697, -97.139, -71.208, -79.877, -80.516,
-            # Mexico
-            -99.133, -103.349, -100.309, -98.190, -117.004,
-            -101.686, -106.488, -107.394, -89.617, -110.966,
-            # Historical
-            -90.058, -76.779, -70.668, -71.208, -81.314,
-            -105.944, -73.756, -69.719, -89.916, -88.040
-        ],
-        'latitude': [
-            # US
-            40.713, 34.052, 41.878, 29.760, 33.448,
-            39.952, 29.424, 32.716, 32.778, 37.339,
-            30.267, 30.332, 32.755, 39.961, 35.227,
-            39.768, 37.774, 47.606, 39.739, 42.361,
-            # Canada
-            43.651, 45.501, 49.283, 51.045, 53.535,
-            45.421, 49.896, 46.813, 43.256, 43.452,
-            # Mexico
-            19.432, 20.677, 25.677, 19.043, 32.514,
-            21.122, 31.690, 24.799, 20.975, 29.088,
-            # Historical
-            38.657, 37.321, 41.957, 46.813, 29.898,
-            35.691, 42.652, 48.143, 38.058, 30.697
-        ],
-        # Add historical periods (for filtering)
-        'historical_period': [
-            # US Cities (Modern)
-            *( ['modern'] * 20 ),
-            # Canadian Cities (Modern)
-            *( ['modern'] * 10 ),
-            # Mexican Cities (Modern)
-            *( ['modern'] * 10 ),
-            # Historical
-            'pre-colonial', 'colonial', 'colonial', 'colonial', 'colonial',
-            'colonial', 'colonial', 'colonial', 'colonial', 'colonial'
-        ]
+        'place_type': ['city'] * 30 + ['city'] * 10 + ['historical_site', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial'],
+        'longitude': [-74.006, -118.243, -87.630, -95.369, -112.074, -75.165, -98.491, -117.161, -96.797, -121.895, -97.733, -81.656, -97.330, -82.999, -80.843, -86.158, -122.419, -122.332, -104.991, -71.059, -79.347, -73.588, -123.116, -114.071, -113.323, -75.697, -97.139, -71.208, -79.877, -80.516, -99.133, -103.349, -100.309, -98.190, -117.004, -101.686, -106.488, -107.394, -89.617, -110.966, -90.058, -76.779, -70.668, -71.208, -81.314, -105.944, -73.756, -69.719, -89.916, -88.040 ],
+        'latitude': [40.713, 34.052, 41.878, 29.760, 33.448, 39.952, 29.424, 32.716, 32.778, 37.339, 30.267, 30.332, 32.755, 39.961, 35.227, 39.768, 37.774, 47.606, 39.739, 42.361, 43.651, 45.501, 49.283, 51.045, 53.535, 45.421, 49.896, 46.813, 43.256, 43.452, 19.432, 20.677, 25.677, 19.043, 32.514, 21.122, 31.690, 24.799, 20.975, 29.088, 38.657, 37.321, 41.957, 46.813, 29.898, 35.691, 42.652, 48.143, 38.058, 30.697 ],
+        'historical_period': ['modern'] * 20 + ['modern'] * 10 + ['modern'] * 10 + ['pre-colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial', 'colonial']
     }
-    
     df = pd.DataFrame(sample_data)
-    gdf = gpd.GeoDataFrame(
-        df, 
-        geometry=gpd.points_from_xy(df.longitude, df.latitude),
-        crs="EPSG:4326"
-    )
-    
-    # Cache the generated fallback data
+    gdf = gpd.GeoDataFrame( df, geometry=gpd.points_from_xy(df.longitude, df.latitude), crs="EPSG:4326" )
     _cache_gdf(gdf.copy(), cache_filepath)
-    
     return gdf
 
 def load_roads(region: Optional[str] = 'north-america', include_historical: bool = True) -> gpd.GeoDataFrame:
@@ -1098,90 +1235,143 @@ def load_roads(region: Optional[str] = 'north-america', include_historical: bool
 
 def load_modern_roads(region: Optional[str] = 'north-america') -> gpd.GeoDataFrame:
     """
-    Load modern road data from OSM (or fallback), using cache.
-    
+    Load modern road data for a specified region using OpenStreetMap PBF data,
+    processed via ogr2ogr. Falls back to simplified hardcoded data if PBF processing fails.
+    Uses a multi-level caching system.
+
     Args:
-        region: Region to load data for
+        region: Region key ('us', 'canada', 'north-america') to load data for.
         
     Returns:
-        GeoDataFrame with modern roads
+        GeoDataFrame with modern roads.
     """
-    # Define cache key/path for fallback data
-    fallback_cache_key = f"fallback_modern_roads_{region}.geojson"
-    cache_filepath = _get_cache_path(os.path.join(CACHE_DIR, fallback_cache_key), params={'region': region})
+    logger.info(f"Attempting to load modern roads for region: {region}")
 
-    # Check cache first
+    if region == 'us':
+        pbf_data_key = 'osm_us'
+    elif region == 'canada':
+        pbf_data_key = 'osm_canada'
+    else: 
+        pbf_data_key = 'osm_north_america'
+        region = 'north-america' 
+
+    pbf_download_dir = download_and_extract_data(pbf_data_key)
+    if not pbf_download_dir:
+        logger.warning(f"Failed to download/locate PBF for {pbf_data_key}. Using fallback modern roads for region '{region}'.")
+        return _create_fallback_modern_roads(region)
+    
+    pbf_filename = os.path.basename(DATA_URLS[pbf_data_key])
+    pbf_filepath = os.path.join(pbf_download_dir, pbf_filename)
+
+    if not os.path.exists(pbf_filepath):
+        logger.warning(f"PBF file {pbf_filepath} not found. Using fallback modern roads for region '{region}'.")
+        return _create_fallback_modern_roads(region)
+
+    processing_version = "v1.1_ogr"
+    sql_filter_roads_str = "highway IS NOT NULL"
+    
+    final_gdf_cache_params = {'feature_type': 'modern_roads', 'region': region, 'filter_version': processing_version}
+    final_gdf_cache_filepath = _get_cache_path(pbf_filepath, params=final_gdf_cache_params)
+
+    cached_gdf = _load_gdf_from_cache(final_gdf_cache_filepath, pbf_filepath)
+    if cached_gdf is not None:
+        logger.info(f"Loaded processed modern roads for region '{region}' from Feather cache: {final_gdf_cache_filepath}")
+        return cached_gdf
+
+    base_pbf_name = Path(pbf_filepath).stem
+    intermediate_geojson_path = os.path.join(CACHE_DIR, f"{base_pbf_name}_modern_roads_lines_{processing_version}.geojson")
+
+    pbf_mtime = os.path.getmtime(pbf_filepath)
+    if not os.path.exists(intermediate_geojson_path) or os.path.getmtime(intermediate_geojson_path) < pbf_mtime:
+        logger.info(f"Processing PBF lines for modern roads ({region}) to {intermediate_geojson_path}...")
+        if not _process_osm_pbf_with_ogr(pbf_filepath, intermediate_geojson_path, 'lines', f'modern_roads_lines_{region}', sql_filter_roads_str):
+            logger.warning(f"Failed to process PBF lines for modern roads ({region}). Using fallback.")
+            return _create_fallback_modern_roads(region)
+    
+    if not os.path.exists(intermediate_geojson_path):
+        logger.warning(f"Intermediate GeoJSON for modern roads ({region}) not found. Using fallback.")
+        return _create_fallback_modern_roads(region)
+        
+    try:
+        gdf = gpd.read_file(intermediate_geojson_path)
+        logger.info(f"Loaded {len(gdf)} modern road lines from {intermediate_geojson_path}")
+    except Exception as e:
+        logger.error(f"Could not load GeoJSON {intermediate_geojson_path}: {e}. Using fallback.")
+        return _create_fallback_modern_roads(region)
+
+    if gdf.empty:
+        logger.warning(f"No modern road features extracted from PBF for region '{region}'. Using fallback.")
+        return _create_fallback_modern_roads(region)
+    
+    if 'highway' not in gdf.columns and 'other_tags' in gdf.columns:
+         try:
+            def extract_tag(tags, key):
+                if not tags: return None
+                try:
+                    tag_dict = dict(t.split('=>') for t in tags.replace('"', '').split(','))
+                    return tag_dict.get(key)
+                except: return None
+            gdf['highway'] = gdf['other_tags'].apply(lambda x: extract_tag(x, 'highway'))
+            gdf['road_type'] = gdf['highway']
+         except Exception as e:
+            logger.debug(f"Could not parse 'highway' from 'other_tags' for roads: {e}")
+    elif 'highway' in gdf.columns:
+        gdf['road_type'] = gdf['highway']
+
+    if gdf.crs is None:
+        gdf.crs = "EPSG:4326"
+    elif str(gdf.crs).lower() != "epsg:4326":
+        logger.info(f"Reprojecting modern roads GDF for {region} to EPSG:4326")
+        gdf = gdf.to_crs("EPSG:4326")
+        
+    _cache_gdf(gdf.copy(), final_gdf_cache_filepath)
+    logger.info(f"Successfully processed and cached modern roads for region '{region}' to {final_gdf_cache_filepath}")
+    return gdf
+
+def _create_fallback_modern_roads(region: str) -> gpd.GeoDataFrame:
+    """Fallback for modern roads, cache key includes region."""
+    logger.warning(f"OSM PBF processing for modern roads failed or not available for region '{region}'. Generating and caching fallback data.")
+
+    fallback_cache_key_filename = f"fallback_modern_roads_{region}.feather"
+    conceptual_source_path = os.path.join(CACHE_DIR, f"conceptual_fallback_source_{fallback_cache_key_filename}")
+    cache_filepath = _get_cache_path(conceptual_source_path, params={'region': region, 'type': 'fallback_modern_roads'})
+    
     if os.path.exists(cache_filepath):
         try:
             logger.info(f"Loading fallback modern roads for region '{region}' from cache: {cache_filepath}")
-            gdf = feather.read_feather(cache_filepath)
-            if gdf.crs is None: gdf.crs = "EPSG:4326"
-            if 'geometry' in gdf.columns:
-                gdf = gdf.set_geometry('geometry')
+            df = feather.read_feather(cache_filepath)
+            crs = None; crs_path = cache_filepath + ".crs"
+            if os.path.exists(crs_path):
+                with open(crs_path, 'r') as f: crs = f.read().strip()
+            if '_wkb' in df.columns:
+                geom_col = 'geometry'; geom_col_path = cache_filepath + ".geom_col"
+                if os.path.exists(geom_col_path):
+                    with open(geom_col_path, 'r') as f: geom_col = f.read().strip()
+                df[geom_col] = df['_wkb'].apply(lambda wkb: wkb_loads(wkb) if wkb else None)
+                df = df.drop(columns=['_wkb'])
+                gdf = gpd.GeoDataFrame(df, geometry=geom_col, crs=crs)
+            else: gdf = gpd.GeoDataFrame(df, crs=crs)
+            if 'geometry' in gdf.columns and isinstance(gdf.geometry, gpd.GeoSeries): gdf = gdf.set_geometry('geometry')
             elif not gdf.empty:
-                 geom_col = gdf.select_dtypes(include='geometry').columns
-                 if len(geom_col) == 1:
-                     gdf = gdf.set_geometry(geom_col[0])
-                 else:
-                     logger.warning(f"Could not determine geometry column in cached fallback roads: {cache_filepath}")
+                 geom_cols = [col for col in gdf.columns if isinstance(gdf[col], gpd.array.GeometryArray)]
+                 if geom_cols: gdf = gdf.set_geometry(geom_cols[0])
+            if gdf.crs is None: gdf.crs = "EPSG:4326"
             return gdf
         except Exception as e:
             logger.error(f"Error loading fallback modern roads from cache {cache_filepath}: {e}. Regenerating.")
-            
-    # --- Production code would attempt PBF processing here ---
-    # Similar logic as in load_settlements...
-    # --- End of hypothetical PBF processing ---
 
-    # If PBF processing skipped/failed, generate fallback
-    logger.warning(f"OSM PBF processing for roads not implemented/failed for region '{region}'. Generating and caching fallback data.")
-    
-    # Major North American highways/roads sample
     roads_data = {
         'osm_id': list(range(1, 21)),
-        'name': [
-            'Interstate 95', 'Interstate 80', 'Interstate 10', 'Interstate 5', 
-            'Trans-Canada Highway', 'Mexico Federal Highway 85',
-            'US Route 1', 'US Route 66', 'US Route 101', 'Mexico Federal Highway 15',
-            'I-90', 'I-70', 'I-40', 'I-35', 'Highway 401',
-            'Interstate 25', 'US Route 2', 'Mexico Federal Highway 45', 'Canada Highway 16', 'Pan-American Highway'
-        ],
-        'highway': ['motorway'] * 5 + ['primary'] * 5 + ['motorway'] * 5 + ['primary'] * 5, # More varied types
-        'road_type': ['motorway'] * 5 + ['primary'] * 5 + ['motorway'] * 5 + ['primary'] * 5, # Consistent column
-        'period': ['modern'] * 20, # Add period
-        'wkt': [
-            # Simplified representations of major roads
-            'LINESTRING(-67.0 45.0, -74.0 40.7, -80.0 25.8)',  # I-95
-            'LINESTRING(-122.4 37.8, -111.9 41.3, -104.9 41.1, -95.7 41.2, -74.0 40.7)',  # I-80
-            'LINESTRING(-118.4 34.0, -106.5 31.8, -98.5 29.4, -90.1 29.9, -84.3 30.4, -80.1 25.8)',  # I-10
-            'LINESTRING(-122.4 37.8, -122.3 47.6, -123.1 49.3)',  # I-5
-            'LINESTRING(-67.0 45.0, -76.5 44.2, -79.4 43.7, -97.1 49.9, -114.1 51.0, -123.1 49.3)',  # Trans-Canada
-            'LINESTRING(-99.1 19.4, -100.3 25.7, -98.3 26.1)',  # Mexico 85
-            'LINESTRING(-80.1 25.8, -82.5 28.1, -80.8 35.2, -77.0 38.9, -74.0 40.7, -71.1 42.4, -70.3 43.7, -67.0 45.0)',  # US-1
-            'LINESTRING(-118.2 34.1, -117.3 34.1, -112.1 35.2, -105.9 35.1, -97.5 35.5, -90.2 38.6, -87.6 41.9)', # US-66 (Adjusted endpoint)
-            'LINESTRING(-118.2 34.1, -122.4 37.8, -122.3 47.6)',  # US-101
-            'LINESTRING(-99.1 19.4, -105.3 20.7, -103.3 20.7, -111.0 29.1, -110.3 32.5)',  # Mexico 15
-            'LINESTRING(-71.1 42.4, -87.6 41.9, -97.5 44.9, -111.9 41.3, -122.3 47.6)',  # I-90 (Adjusted start)
-            'LINESTRING(-75.1 39.9, -87.6 39.8, -92.2 38.6, -98.5 39.1, -104.9 39.7, -111.9 39.3)',  # I-70 (Adjusted ends)
-            'LINESTRING(-80.8 35.2, -90.0 35.1, -97.5 35.5, -105.9 35.1, -117.3 34.1)',  # I-40 (Adjusted start)
-            'LINESTRING(-97.1 49.9, -97.5 35.5, -97.3 30.3, -98.5 29.4)',  # I-35 (Adjusted ends)
-            'LINESTRING(-83.0 42.3, -79.4 43.7, -76.5 44.2, -73.6 45.5)',  # Highway 401
-            'LINESTRING(-105.9 35.1, -104.9 39.7, -106.0 40.6, -104.7 45.0)',  # I-25 (Adjusted end)
-            'LINESTRING(-71.1 42.4, -79.0 43.0, -90.5 46.8, -97.1 49.9, -122.3 47.6)',  # US-2 (Adjusted start)
-            'LINESTRING(-99.1 19.4, -101.7 21.1, -101.3 22.1, -101.7 23.2, -102.3 26.9, -106.5 31.8)',  # Mexico 45
-            'LINESTRING(-123.1 49.3, -120.0 50.0, -113.3 53.5, -101.0 52.0, -97.1 49.9)',  # Canada 16 (Adjusted point)
-            'LINESTRING(-80.1 25.8, -84.3 30.4, -90.1 29.9, -97.5 35.5, -106.5 31.8, -99.1 19.4, -75.0 0.0)'  # Pan-American (Simplified South America part)
-        ]
+        'name': ['Interstate 95', 'Interstate 80', 'Interstate 10', 'Interstate 5', 'Trans-Canada Highway', 'Mexico Federal Highway 85', 'US Route 1', 'US Route 66', 'US Route 101', 'Mexico Federal Highway 15', 'I-90', 'I-70', 'I-40', 'I-35', 'Highway 401', 'Interstate 25', 'US Route 2', 'Mexico Federal Highway 45', 'Canada Highway 16', 'Pan-American Highway'],
+        'highway': ['motorway'] * 5 + ['primary'] * 5 + ['motorway'] * 5 + ['primary'] * 5,
+        'road_type': ['motorway'] * 5 + ['primary'] * 5 + ['motorway'] * 5 + ['primary'] * 5,
+        'period': ['modern'] * 20,
+        'wkt': ['LINESTRING(-67.0 45.0, -74.0 40.7, -80.0 25.8)', 'LINESTRING(-122.4 37.8, -111.9 41.3, -104.9 41.1, -95.7 41.2, -74.0 40.7)', 'LINESTRING(-118.4 34.0, -106.5 31.8, -98.5 29.4, -90.1 29.9, -84.3 30.4, -80.1 25.8)', 'LINESTRING(-122.4 37.8, -122.3 47.6, -123.1 49.3)', 'LINESTRING(-67.0 45.0, -76.5 44.2, -79.4 43.7, -97.1 49.9, -114.1 51.0, -123.1 49.3)', 'LINESTRING(-99.1 19.4, -100.3 25.7, -98.3 26.1)', 'LINESTRING(-80.1 25.8, -82.5 28.1, -80.8 35.2, -77.0 38.9, -74.0 40.7, -71.1 42.4, -70.3 43.7, -67.0 45.0)', 'LINESTRING(-118.2 34.1, -117.3 34.1, -112.1 35.2, -105.9 35.1, -97.5 35.5, -90.2 38.6, -87.6 41.9)', 'LINESTRING(-118.2 34.1, -122.4 37.8, -122.3 47.6)', 'LINESTRING(-99.1 19.4, -105.3 20.7, -103.3 20.7, -111.0 29.1, -110.3 32.5)', 'LINESTRING(-71.1 42.4, -87.6 41.9, -97.5 44.9, -111.9 41.3, -122.3 47.6)', 'LINESTRING(-75.1 39.9, -87.6 39.8, -92.2 38.6, -98.5 39.1, -104.9 39.7, -111.9 39.3)', 'LINESTRING(-80.8 35.2, -90.0 35.1, -97.5 35.5, -105.9 35.1, -117.3 34.1)', 'LINESTRING(-97.1 49.9, -97.5 35.5, -97.3 30.3, -98.5 29.4)', 'LINESTRING(-83.0 42.3, -79.4 43.7, -76.5 44.2, -73.6 45.5)', 'LINESTRING(-105.9 35.1, -104.9 39.7, -106.0 40.6, -104.7 45.0)', 'LINESTRING(-71.1 42.4, -79.0 43.0, -90.5 46.8, -97.1 49.9, -122.3 47.6)', 'LINESTRING(-99.1 19.4, -101.7 21.1, -101.3 22.1, -101.7 23.2, -102.3 26.9, -106.5 31.8)', 'LINESTRING(-123.1 49.3, -120.0 50.0, -113.3 53.5, -101.0 52.0, -97.1 49.9)', 'LINESTRING(-80.1 25.8, -84.3 30.4, -90.1 29.9, -97.5 35.5, -106.5 31.8, -99.1 19.4, -75.0 0.0)']
     }
-    
     df = pd.DataFrame(roads_data)
     try:
-        # Ensure shapely is available
         from shapely import wkt
-        gdf = gpd.GeoDataFrame(
-            df,
-            geometry=df['wkt'].apply(wkt.loads),
-            crs="EPSG:4326"
-        )
+        gdf = gpd.GeoDataFrame( df, geometry=df['wkt'].apply(wkt.loads), crs="EPSG:4326" )
     except ImportError:
          logger.error("Shapely required for fallback modern roads data.")
          return gpd.GeoDataFrame(columns=['geometry', 'road_type', 'period'], geometry='geometry', crs="EPSG:4326")
@@ -1189,9 +1379,7 @@ def load_modern_roads(region: Optional[str] = 'north-america') -> gpd.GeoDataFra
          logger.error(f"Error creating fallback modern roads GDF: {fallback_err}")
          return gpd.GeoDataFrame(columns=['geometry', 'road_type', 'period'], geometry='geometry', crs="EPSG:4326")
 
-    # Cache the generated data
     _cache_gdf(gdf.copy(), cache_filepath)
-
     return gdf
 
 def load_dem_data(bounds: Optional[Tuple[float, float, float, float]] = None) -> Optional[Dict]:

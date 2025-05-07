@@ -49,7 +49,8 @@ from python.utils.geo_utils import (
     get_elevation_category,
     calculate_landscape_metrics,
     determine_geomorphological_context,
-    find_nearest_feature_db
+    find_nearest_feature_db,
+    get_elevation_at_point
 )
 
 # North American specific context
@@ -292,22 +293,52 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
         except Exception as e:
             logger.error(f"Error processing colonial roads: {e}")
     
-    # Analyze terrain context
+    # --- Terrain Analysis ---
+    dem_path = None # Initialize dem_path
     try:
-        logger.info("Analyzing terrain context...")
-        landscape_metrics = calculate_landscape_metrics(erratic_point)
-        geomorphological_context = determine_geomorphological_context(erratic_point)
-        
-        # Add relevant metrics to results
-        results["terrain_context"] = geomorphological_context.get('landform')
-        results["slope_position"] = geomorphological_context.get('slope_position')
-        results["ruggedness_index"] = landscape_metrics.get('ruggedness_index')
-        
-        logger.info(f"Terrain context: {results['terrain_context']} on {results['slope_position']}")
+        dem_path = load_dem_data()
     except Exception as e:
-        logger.error(f"Error analyzing terrain: {e}")
-    
-    # Estimate displacement distance based on known glacial flow patterns
+        logger.error(f"Failed to load DEM data: {e}")
+
+    if dem_path:
+        try:
+            logger.info("Analyzing point elevation...")
+            point_elevation = get_elevation_at_point(erratic_point, dem_path)
+            if point_elevation is not None:
+                # Update elevation in results if not already present or if more accurate
+                # The Erratic model might already have an elevation, but DEM provides standardized one
+                results['elevation_dem'] = point_elevation
+                results['elevation_category'] = get_elevation_category(point_elevation)
+                logger.info(f"Elevation from DEM: {point_elevation:.1f}m (Category: {results['elevation_category']})")
+            else:
+                logger.warning("Could not retrieve elevation from DEM for this point.")
+        except Exception as e:
+            logger.error(f"Error getting point elevation: {e}")
+            
+        try:
+            logger.info("Analyzing terrain context (landscape metrics & geomorphology)...")
+            # Use a moderate radius for landscape metrics, adjust as needed
+            landscape_metrics = calculate_landscape_metrics(erratic_point, dem_path, radius_m=500) 
+            geomorphological_context = determine_geomorphological_context(erratic_point, dem_path)
+            
+            # Add relevant metrics to results if they are calculated
+            # Ensure these keys exist in ErraticAnalyses model or are for informational purposes only
+            if not np.isnan(landscape_metrics.get('ruggedness_tri', np.nan)):
+                results["ruggedness_tri"] = landscape_metrics['ruggedness_tri']
+            if geomorphological_context.get('landform', 'unknown') != 'unknown':
+                results["terrain_landform"] = geomorphological_context['landform']
+            if geomorphological_context.get('slope_position', 'unknown') != 'unknown':
+                 results["terrain_slope_position"] = geomorphological_context['slope_position']
+            
+            logger.info(f"Terrain context: Landform={results.get('terrain_landform')}, Slope Position={results.get('terrain_slope_position')}, TRI={results.get('ruggedness_tri')}")
+        except Exception as e:
+            logger.error(f"Error analyzing terrain context: {e}")
+    else:
+        logger.warning("DEM data not available, skipping terrain analysis.")
+
+    # --- Other Calculated Fields ---
+
+    # Estimate displacement distance (simplified example)
     try:
         # This is a simplified model - a real implementation would use actual glacial flow models
         # and geological data for the specific region in North America
@@ -347,26 +378,6 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     except Exception as e:
         logger.error(f"Error calculating accessibility: {e}")
     
-    # Calculate size category if size is available
-    if erratic.get('size_meters') is not None:
-        try:
-            size = float(erratic.get('size_meters'))
-            
-            # Categorize based on largest dimension
-            if size < 1.0:
-                size_category = "small"
-            elif size < 3.0:
-                size_category = "medium"
-            elif size < 6.0:
-                size_category = "large"
-            else:
-                size_category = "monumental"
-            
-            results["size_category"] = size_category
-            logger.info(f"Size category: {size_category} (from {size}m)")
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Could not categorize size: {e}")
-    
     # Combine all results
     analysis_result = {
         "erratic_id": erratic_id,
@@ -386,124 +397,6 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
 
     return analysis_result
 
-def calculate_spatial_relationships(erratics_gdf: gpd.GeoDataFrame) -> Dict:
-    """
-    Calculate spatial relationships between erratics.
-    
-    Args:
-        erratics_gdf: GeoDataFrame containing all erratics
-        
-    Returns:
-        Dictionary with spatial analysis results
-    """
-    if erratics_gdf.empty:
-        return {"error": "No erratics data available"}
-    
-    try:
-        # Calculate distance matrix between all erratics
-        n_erratics = len(erratics_gdf)
-        distance_matrix = np.zeros((n_erratics, n_erratics))
-        
-        for i in range(n_erratics):
-            for j in range(i+1, n_erratics):
-                # Calculate haversine distance
-                point1 = Point(
-                    erratics_gdf.iloc[i].geometry.x,
-                    erratics_gdf.iloc[i].geometry.y
-                )
-                point2 = Point(
-                    erratics_gdf.iloc[j].geometry.x,
-                    erratics_gdf.iloc[j].geometry.y
-                )
-                distance = haversine_distance(
-                    point1.latitude, point1.longitude,
-                    point2.latitude, point2.longitude
-                )
-                distance_matrix[i, j] = distance
-                distance_matrix[j, i] = distance
-        
-        # Identify clusters using DBSCAN
-        try:
-            from sklearn.cluster import DBSCAN
-            
-            # Convert distance matrix to a form suitable for DBSCAN
-            X = erratics_gdf[['geometry']].copy()
-            X['x'] = X.geometry.x
-            X['y'] = X.geometry.y
-            coords = X[['x', 'y']].values
-            
-            # Automatically determine eps based on k-distance graph
-            # (this is a simplified approach)
-            from sklearn.neighbors import NearestNeighbors
-            nn = NearestNeighbors(n_neighbors=min(10, len(coords)-1))
-            nn.fit(coords)
-            distances, indices = nn.kneighbors(coords)
-            distances = np.sort(distances[:, -1])
-            
-            # Calculate "knee point" of the distance curve
-            from kneed import KneeLocator
-            knee = KneeLocator(range(len(distances)), distances, curve='convex', direction='increasing')
-            eps = distances[knee.knee] if knee.knee is not None else np.median(distances)
-            
-            # Apply DBSCAN
-            db = DBSCAN(eps=eps, min_samples=3, metric='haversine')
-            cluster_labels = db.fit_predict(coords)
-            
-            # Count clusters (excluding noise points labeled as -1)
-            n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-            
-            # Calculate cluster statistics
-            clusters = {}
-            for i in range(n_clusters):
-                cluster_mask = cluster_labels == i
-                clusters[i] = {
-                    "count": np.sum(cluster_mask),
-                    "erratics": erratics_gdf.loc[cluster_mask, 'id'].tolist(),
-                    "names": erratics_gdf.loc[cluster_mask, 'name'].tolist()
-                }
-            
-            # Calculate isolation metrics
-            isolation_scores = {}
-            for i in range(n_clusters):
-                cluster_mask = cluster_labels == i
-                cluster_erratics = erratics_gdf.loc[cluster_mask, 'id'].tolist()
-                cluster_distances = [distance_matrix[i, j] for j in range(n_erratics) if j in cluster_mask]
-                min_distance = np.min(cluster_distances)
-                isolation_scores[cluster_erratics[0]] = min_distance
-            
-            return {
-                "num_erratics": n_erratics,
-                "mean_nearest_distance": np.mean([d for d in isolation_scores.values() if not np.isinf(d)]),
-                "max_nearest_distance": np.max([d for d in isolation_scores.values() if not np.isinf(d)]),
-                "min_nearest_distance": np.min([d for d in isolation_scores.values() if not np.isinf(d)]),
-                "num_clusters": n_clusters,
-                "clusters": clusters,
-                "isolation_scores": isolation_scores,
-                "dbscan_eps": eps
-            }
-        except ImportError:
-            logger.warning("DBSCAN clustering not available, using simple distance analysis")
-            
-            # Calculate simple nearest neighbor statistics
-            nearest_distances = []
-            for i in range(n_erratics):
-                distances = distance_matrix[i].copy()
-                distances[i] = float('inf')  # Exclude self
-                nearest_distances.append(np.min(distances))
-            
-            return {
-                "num_erratics": n_erratics,
-                "mean_nearest_distance": np.mean(nearest_distances),
-                "max_nearest_distance": np.max(nearest_distances),
-                "min_nearest_distance": np.min(nearest_distances)
-            }
-            
-    except Exception as e:
-        logger.error(f"Error calculating spatial relationships: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return {"error": str(e)}
-
 def main():
     """Main function for command line execution."""
     parser = argparse.ArgumentParser(description='Calculate proximity for a glacial erratic')
@@ -511,7 +404,6 @@ def main():
     parser.add_argument('--features', nargs='+', help='Feature layers to calculate proximity to')
     parser.add_argument('--update-db', action='store_true', help='Update database with results')
     parser.add_argument('--output', type=str, help='Output file for results (JSON)')
-    parser.add_argument('--cluster-analysis', action='store_true', help='Calculate spatial clustering of all erratics')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
@@ -520,36 +412,6 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    # Check if we should do cluster analysis
-    if args.cluster_analysis:
-        logger.info("Starting cluster analysis for all erratics")
-        from python.utils.data_loader import load_erratics
-        erratics_gdf = load_erratics()
-        
-        if erratics_gdf.empty:
-            logger.error("No erratics data available for cluster analysis")
-            print(json.dumps({"error": "No erratics data available for cluster analysis"}))
-            return 1
-        
-        results = calculate_spatial_relationships(erratics_gdf)
-        
-        # Handle error
-        if 'error' in results:
-            logger.error(f"Analysis error: {results['error']}")
-            print(json.dumps({"error": results['error']}))
-            return 1
-        
-        # Write to output file if specified
-        if args.output:
-            logger.info(f"Writing cluster analysis results to {args.output}")
-            json_to_file(results, args.output)
-        
-        # Print results as JSON to stdout
-        print(json.dumps(results, indent=2))
-        logger.info("Cluster analysis complete")
-        return 0
-    
-    # Otherwise do individual erratic analysis
     logger.info(f"Starting proximity analysis for erratic {args.erratic_id}")
     results = calculate_proximity(args.erratic_id, args.features)
     

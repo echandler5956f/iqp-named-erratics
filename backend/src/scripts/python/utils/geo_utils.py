@@ -13,6 +13,34 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 import logging
 import psycopg2 # Added for direct DB query
 from psycopg2.extras import RealDictCursor # To get results as dicts
+import os # For path operations
+
+try:
+    import rasterio
+    import rasterio.sample
+    from rasterio.windows import Window
+    from rasterio.warp import calculate_default_transform, reproject, Resampling # For potential reprojection
+    RASTERIO_AVAILABLE = True
+except ImportError:
+    RASTERIO_AVAILABLE = False
+    logging.warning("rasterio library not found. DEM processing functions will not be available.")
+
+# Add the parent directory to sys.path to import utils
+# This assumes geo_utils.py is in backend/src/scripts/python/utils
+script_dir = os.path.dirname(os.path.abspath(__file__))
+utils_dir = os.path.dirname(script_dir) # Go up one level to python/
+src_dir = os.path.dirname(utils_dir) # Go up one level to src/
+if src_dir not in sys.path:
+    sys.path.append(src_dir)
+
+# Need to import from data_loader *after* modifying sys.path if structure demands it
+# Assuming standard structure where data_loader is importable after path adjustment
+try:
+    from python.utils.data_loader import download_and_extract_data, GIS_DATA_DIR, CACHE_DIR
+    DATA_LOADER_AVAILABLE = True
+except ImportError as e:
+    DATA_LOADER_AVAILABLE = False
+    logging.error(f"Failed to import data_loader: {e}. DEM loading will fail.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -171,200 +199,293 @@ def get_elevation_category(elevation: float) -> str:
     """
     return categorize_elevation(elevation)
 
-def load_dem_data() -> Optional[Dict]:
+def load_dem_data() -> Optional[str]:
     """
-    Load Digital Elevation Model data - placeholder for full implementation.
-    
-    Returns:
-        Dictionary with DEM data or None if failed
-    """
-    # In a real implementation, this would load DEM data from a raster file or service
-    # For now, return None to indicate no data available
-    return None
+    Ensures the North American DEM is downloaded and returns its file path.
+    Requires data_loader to be available.
 
-def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[Optional[Dict], float]:
+    Returns:
+        File path to the downloaded DEM TIF file, or None if download fails or data_loader unavailable.
     """
-    Find the nearest feature to a point.
+    if not DATA_LOADER_AVAILABLE:
+        logger.error("data_loader is not available. Cannot download DEM.")
+        return None
+
+    data_key = 'elevation_dem_na'
+    dem_dir = download_and_extract_data(data_key)
+    if not dem_dir:
+        logger.error(f"Failed to download or locate DEM data directory for key '{data_key}'")
+        return None
     
-    Args:
-        point: Point to find the nearest feature to
-        features_gdf: GeoDataFrame with features
+    # Find the TIF file within the directory
+    tif_files = [f for f in os.listdir(dem_dir) if f.lower().endswith('.tif')]
+    if not tif_files:
+        logger.error(f"No .tif file found in the DEM directory: {dem_dir}")
+        return None
+    
+    if len(tif_files) > 1:
+        logger.warning(f"Multiple .tif files found in {dem_dir}, using the first one: {tif_files[0]}")
         
-    Returns:
-        Tuple of (feature_data, distance)
+    dem_filepath = os.path.join(dem_dir, tif_files[0])
+    logger.info(f"DEM file path: {dem_filepath}")
+    return dem_filepath
+
+def get_elevation_at_point(point: Point, dem_path: str) -> Optional[float]:
     """
-    if features_gdf.empty:
-        return None, float('inf')
-    
-    distances = calculate_distances_to_features(point, features_gdf)
-    if not distances:
-        return None, float('inf')
-    
-    # Get nearest feature
-    nearest = distances[0]
-    
-    # Get full feature data
-    # Correct handling for index or custom ID
-    feature_identifier = nearest.get('feature_id') 
-    feature_data = None
-    if feature_identifier is not None:
-        try:
-            # Check if the identifier likely corresponds to the GeoDataFrame index
-            if isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
-                 feature_data = features_gdf.loc[feature_identifier].to_dict()
-            # Otherwise, maybe it corresponds to an 'id' column or similar
-            elif 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
-                 feature_data = features_gdf[features_gdf['id'] == feature_identifier].iloc[0].to_dict()
-            else:
-                 # Fallback if ID doesn't match index or 'id' column
-                 logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame.")
-                 # Try using the index from the original loop if distance list order is preserved
-                 # This relies on the implementation detail of calculate_distances_to_features
-                 # which is less robust. Only use as a last resort if needed.
-                 pass # Or implement a safer fallback if possible
-
-        except Exception as e:
-             logger.error(f"Error retrieving feature data for identifier {feature_identifier}: {e}")
-
-    # Use standard dict to avoid serialization issues with geometry
-    if feature_data and 'geometry' in feature_data:
-        del feature_data['geometry']
-    
-    return feature_data, nearest.get('distance', float('inf'))
-
-def find_nearest_feature_db(point: Point, conn, table_name: str, geom_col: str, 
-                              feature_id_col: str = 'id', attrs_to_select: Optional[List[str]] = None) -> Tuple[Optional[Dict], float]:
-    """
-    Find the nearest feature to a point using a direct PostGIS query.
-    Assumes the table geometry is in EPSG:4326.
+    Get the elevation value from a DEM raster at a specific point.
 
     Args:
-        point: Point object to find the nearest feature to.
-        conn: Active psycopg2 database connection.
-        table_name: Name of the database table (including schema if needed).
-        geom_col: Name of the geometry column in the table.
-        feature_id_col: Name of the primary key or unique ID column.
-        attrs_to_select: Optional list of other attribute columns to select.
+        point: Point object with longitude and latitude.
+        dem_path: Path to the DEM raster file (e.g., GeoTIFF).
 
     Returns:
-        Tuple of (feature_data_dict, distance_meters) or (None, float('inf')).
+        Elevation value in the units of the DEM, or None if error or outside bounds.
     """
-    if not conn:
-        logger.error("Database connection not provided for find_nearest_feature_db")
-        return None, float('inf')
+    if not RASTERIO_AVAILABLE:
+        logger.warning("rasterio not available, cannot get elevation.")
+        return None
+    if not dem_path or not os.path.exists(dem_path):
+        logger.error(f"DEM file not found at {dem_path}")
+        return None
 
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            lon = float(point.longitude)
-            lat = float(point.latitude)
-
-            # Build SELECT clause carefully
-            select_cols = [feature_id_col]
-            if attrs_to_select:
-                safe_attrs = [attr for attr in attrs_to_select if attr != geom_col and attr != feature_id_col]
-                select_cols.extend(safe_attrs)
+        with rasterio.open(dem_path) as src:
+            # Ensure point is in the same CRS as the raster
+            # Assuming point is WGS84 (EPSG:4326) and DEM might be different
+            point_coords = [(point.longitude, point.latitude)]
             
-            # Ensure unique columns
-            select_cols = list(dict.fromkeys(select_cols)) 
+            # Sample the raster at the given coordinates
+            # Note: rasterio.sample expects coordinates in the raster's CRS.
+            # If the DEM is not EPSG:4326, we need to transform the point coords.
+            # For simplicity here, we assume the DEM is EPSG:4326 or compatible.
+            # A robust implementation would check src.crs and transform if needed.
+            if str(src.crs).lower() != 'epsg:4326':
+                logger.warning(f"DEM CRS ({src.crs}) is not EPSG:4326. Elevation sampling might be inaccurate without coordinate transformation.")
+                # Add coordinate transformation logic here if necessary
             
-            # Quote column names correctly for the query
-            select_clause = ", ".join([f'"{c}"' for c in select_cols]) 
+            # Use sample method to get value(s)
+            # It returns a generator, get the first value
+            value_generator = src.sample(point_coords)
+            try:
+                elevation_value = next(value_generator)[0] # Get value from the first band
+            except StopIteration:
+                logger.warning(f"Point {point} seems to be outside the DEM bounds.")
+                return None
 
-            # Construct the PostGIS query using placeholders
-            query = f""" 
-                SELECT 
-                    {select_clause},
-                    ST_DistanceSphere(
-                        "{geom_col}", 
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)
-                    ) AS distance_meters
-                FROM "{table_name}"
-                ORDER BY 
-                    "{geom_col}" <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)
-                LIMIT 1;
-            """
-            
-            # Execute the query with parameters
-            cursor.execute(query, (lon, lat, lon, lat))
-            nearest = cursor.fetchone()
-            
-            if nearest:
-                distance = nearest.pop('distance_meters', float('inf'))
-                return dict(nearest), float(distance)
-            else:
-                logger.info(f"No features found in table '{table_name}'.")
-                return None, float('inf')
+            # Check for nodata value
+            if src.nodata is not None and elevation_value == src.nodata:
+                logger.warning(f"Point {point} falls on a nodata value in the DEM.")
+                return None
+                
+            return float(elevation_value)
 
-    except (Exception, psycopg2.Error) as e:
-        logger.error(f"Error querying nearest feature in '{table_name}': {e}")
-        try:
-            if conn and not conn.closed: # Check if connection is valid before rollback
-                 conn.rollback()
-        except Exception as rb_err:
-            logger.error(f"Error during rollback: {rb_err}")
-        return None, float('inf')
+    except rasterio.RasterioIOError as e:
+        logger.error(f"Rasterio IO error reading {dem_path} at point {point}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting elevation from DEM {dem_path} at point {point}: {e}")
+        return None
 
-def calculate_watershed(point: Point, dem_gdf: gpd.GeoDataFrame) -> Optional[gpd.GeoDataFrame]:
+def calculate_terrain_ruggedness_index(window_data: np.ndarray) -> float:
     """
-    Calculate watershed for a point based on DEM data.
-    This is a placeholder for a more complex implementation.
+    Calculate Terrain Ruggedness Index (TRI) for a window of elevation data.
+    TRI = Mean of the absolute differences between the center cell and its 8 neighbors.
+    """
+    if window_data.shape != (3, 3):
+        # Need a 3x3 window for standard TRI
+        # Could also calculate over larger windows, but this is typical
+        logger.warning(f"TRI calculation requires a 3x3 window, got {window_data.shape}. Cannot calculate TRI.")
+        return np.nan
+    
+    center_value = window_data[1, 1]
+    if np.isnan(center_value):
+        return np.nan
+        
+    diff_sum = 0
+    valid_neighbors = 0
+    for i in range(3):
+        for j in range(3):
+            if i == 1 and j == 1:
+                continue # Skip center cell
+            neighbor_value = window_data[i, j]
+            if not np.isnan(neighbor_value):
+                diff_sum += abs(neighbor_value - center_value)
+                valid_neighbors += 1
+    
+    if valid_neighbors == 0:
+        return np.nan
+        
+    return diff_sum / valid_neighbors # Return mean difference
+
+def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1000) -> Dict[str, float]:
+    """
+    Calculate basic landscape metrics within a radius of the point using a DEM.
+    Requires rasterio.
     
     Args:
-        point: Point to calculate watershed for
-        dem_gdf: DEM data as GeoDataFrame
+        point: Center point for landscape analysis (lon, lat)
+        dem_path: Path to the DEM raster file.
+        radius_m: Radius in meters around the point.
         
     Returns:
-        GeoDataFrame with watershed polygon or None if not possible
+        Dictionary with calculated landscape metrics (e.g., elevation stats, ruggedness).
+        Returns empty dict or dict with NaNs if calculation fails.
     """
-    # This is a complex calculation that would require specialized libraries
-    # In a full implementation, you might use tools like Whitebox, GRASS GIS, or custom algorithms
-    logger.warning("Watershed calculation not fully implemented. Requires specialized GIS processing.")
-    return None
+    if not RASTERIO_AVAILABLE:
+        logger.warning("rasterio not available, cannot calculate landscape metrics.")
+        return {}
+    if not dem_path or not os.path.exists(dem_path):
+        logger.error(f"DEM file not found at {dem_path}")
+        return {}
 
-def calculate_landscape_metrics(point: Point, radius_m: float = 1000) -> Dict[str, float]:
-    """
-    Calculate various landscape metrics within a radius of the point.
-    This is a placeholder for a more complex implementation.
-    
-    Args:
-        point: Center point for landscape analysis
-        radius_m: Radius in meters around point
-        
-    Returns:
-        Dictionary with landscape metrics
-    """
-    # This would calculate various landscape metrics using real data
-    # For now, return placeholder values
-    return {
-        'ruggedness_index': 35.2,  # Higher values = more rugged
-        'elevation_variability': 120.5,  # Standard deviation of elevation in the area
-        'slope_mean': 12.8,  # Average slope in degrees
-        'aspect_mean': 215.6,  # Average aspect in degrees (south-southwest)
-        'curvature_mean': 0.05,  # Average curvature (slightly convex)
-        'forest_cover_percent': 65.3,  # Percent of forest cover
-        'water_cover_percent': 8.2  # Percent of water cover
+    metrics = {
+        'elevation_mean': np.nan,
+        'elevation_stddev': np.nan,
+        'ruggedness_tri': np.nan, 
+        # Add more metrics like slope, aspect if needed (requires more complex calculation)
     }
 
-def determine_geomorphological_context(point: Point) -> Dict[str, str]:
+    try:
+        with rasterio.open(dem_path) as src:
+            # Convert radius in meters to pixels
+            # This is approximate if the CRS is geographic (like EPSG:4326)
+            # A more accurate way uses the transform and CRS properties.
+            pixel_size_x = src.res[0]
+            pixel_size_y = src.res[1]
+            if src.crs.is_geographic:
+                # Approximation: degrees per meter varies with latitude
+                m_per_deg_lat = 111132.954 - 559.822 * math.cos(2 * math.radians(point.latitude)) + 1.175 * math.cos(4 * math.radians(point.latitude))
+                m_per_deg_lon = 111320 * math.cos(math.radians(point.latitude))
+                radius_deg_x = radius_m / m_per_deg_lon
+                radius_deg_y = radius_m / m_per_deg_lat
+                radius_px_x = int(radius_deg_x / abs(pixel_size_x))
+                radius_px_y = int(radius_deg_y / abs(pixel_size_y))
+            else: # Projected CRS
+                radius_px_x = int(radius_m / abs(pixel_size_x))
+                radius_px_y = int(radius_m / abs(pixel_size_y))
+                
+            # Get pixel coordinates of the point
+            row, col = src.index(point.longitude, point.latitude)
+            
+            # Define the window
+            # Ensure window stays within raster bounds
+            win_row_off = max(0, row - radius_px_y)
+            win_col_off = max(0, col - radius_px_x)
+            win_height = min(src.height - win_row_off, 2 * radius_px_y + 1)
+            win_width = min(src.width - win_col_off, 2 * radius_px_x + 1)
+            
+            window = Window(win_col_off, win_row_off, win_width, win_height)
+            
+            # Read data within the window
+            window_data = src.read(1, window=window)
+            
+            # Handle nodata values
+            nodata_val = src.nodata
+            if nodata_val is not None:
+                valid_data = window_data[window_data != nodata_val]
+            else:
+                valid_data = window_data.flatten() # Assume all data is valid if nodata not defined
+                
+            if valid_data.size == 0:
+                logger.warning(f"No valid DEM data found in window around {point}")
+                return metrics # Return NaNs
+
+            # Calculate basic stats
+            metrics['elevation_mean'] = float(np.mean(valid_data))
+            metrics['elevation_stddev'] = float(np.std(valid_data))
+
+            # Calculate TRI (Terrain Ruggedness Index) for the center pixel (requires 3x3 window)
+            # Read a 3x3 window centered on the point
+            if row > 0 and row < src.height - 1 and col > 0 and col < src.width - 1:
+                tri_window_data = src.read(1, window=Window(col-1, row-1, 3, 3))
+                if nodata_val is not None:
+                    tri_window_data = np.where(tri_window_data == nodata_val, np.nan, tri_window_data).astype(float)
+                else:
+                     tri_window_data = tri_window_data.astype(float)
+                metrics['ruggedness_tri'] = calculate_terrain_ruggedness_index(tri_window_data)
+            else:
+                logger.warning(f"Point {point} is too close to DEM edge to calculate 3x3 TRI.")
+
+            # Placeholder: More complex metrics like slope, aspect would require dedicated libraries or algorithms
+            # e.g., using numpy.gradient or richdem
+
+    except rasterio.RasterioIOError as e:
+        logger.error(f"Rasterio IO error processing DEM {dem_path} for metrics: {e}")
+    except Exception as e:
+        logger.error(f"Error calculating landscape metrics from DEM {dem_path}: {e}")
+        
+    return metrics
+
+def determine_geomorphological_context(point: Point, dem_path: str) -> Dict[str, str]:
     """
-    Determine the geomorphological context of a point.
-    This is a placeholder for a more complex implementation.
+    Determine a simplified geomorphological context of a point using DEM.
+    Requires rasterio.
     
     Args:
         point: Point to analyze
+        dem_path: Path to the DEM raster file.
         
     Returns:
-        Dictionary with geomorphological context information
+        Dictionary with simplified geomorphological context information.
     """
-    # This would analyze terrain, slope, etc. to determine landform type
-    # For now, return placeholder values
-    return {
-        'landform': 'hillside',
-        'slope_position': 'mid-slope',
-        'curvature_type': 'slightly concave',
-        'hydrological_context': 'distant from streams',
-        'geomorphological_unit': 'glacial till plain'
+    if not RASTERIO_AVAILABLE:
+        logger.warning("rasterio not available, cannot determine geomorph context.")
+        return {}
+    if not dem_path or not os.path.exists(dem_path):
+        logger.error(f"DEM file not found at {dem_path}")
+        return {}
+
+    context = {
+        'landform': 'unknown',
+        'slope_position': 'unknown',
+        # 'curvature_type': 'unknown',
+        # 'hydrological_context': 'unknown' 
     }
+
+    try:
+        # Get elevation at the point
+        elevation = get_elevation_at_point(point, dem_path)
+        if elevation is None:
+            return context # Cannot proceed without elevation
+            
+        # Use landscape metrics (basic version for now)
+        # A small radius might be better for local context
+        metrics = calculate_landscape_metrics(point, dem_path, radius_m=100) # Use a smaller radius for local context
+        
+        elevation_stddev = metrics.get('elevation_stddev', np.nan)
+        ruggedness = metrics.get('ruggedness_tri', np.nan)
+
+        # Simple rules based on local variation / ruggedness
+        if not np.isnan(elevation_stddev):
+            if elevation_stddev < 5:
+                context['landform'] = 'flat_plain'
+                context['slope_position'] = 'level'
+            elif elevation_stddev < 20:
+                context['landform'] = 'undulating_terrain'
+                # Need slope/aspect for better slope position
+            else:
+                context['landform'] = 'hilly_or_mountainous'
+        
+        if not np.isnan(ruggedness):
+             if ruggedness < 10:
+                  # Potentially refine landform if ruggedness is low
+                  if context['landform'] == 'hilly_or_mountainous': context['landform'] = 'rolling_hills'
+             elif ruggedness > 50:
+                  # High ruggedness indicates more complex terrain
+                  if context['landform'] != 'hilly_or_mountainous': context['landform'] = 'rugged_hills'
+                  
+        # Placeholder: Slope position and curvature require slope/aspect calculation
+        # which is more involved (e.g., using numpy.gradient or dedicated libraries)
+        # Example (conceptual):
+        # slope, aspect = calculate_slope_aspect(dem_window)
+        # if slope < 5: context['slope_position'] = 'flat'
+        # elif slope > 30: context['slope_position'] = 'steep_slope'
+        # else: context['slope_position'] = 'gentle_slope'
+
+    except Exception as e:
+        logger.error(f"Error determining geomorphological context: {e}")
+
+    return context
 
 def direction_to_cardinal(degrees: float) -> str:
     """
