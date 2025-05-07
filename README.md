@@ -12,9 +12,9 @@ This application provides an interactive map interface to explore named glacial 
 - **Comprehensive Backend Analysis:**
   * Integration with diverse GIS datasets (HydroSHEDS, Native Land Digital, OSM, historical data) providing rich North American context.
   * Calculation of proximity to various features (water bodies, modern/colonial settlements & roads, Native territories).
-  * Contextual characterization based on elevation, accessibility, size, estimated displacement, and geomorphology.
-  * NLP-based classification using descriptions and notes to uncover thematic categories (via Sentence Transformers and Topic Modeling like BERTopic/LDA).
-  * Spatial relationship analysis between erratics (clustering, nearest neighbor distances).
+  * Contextual characterization based on elevation, accessibility, size, estimated displacement, geomorphology, and terrain metrics (ruggedness, slope position).
+  * NLP-based classification using descriptions and notes to uncover thematic categories (via Sentence Transformers and Topic Modeling like BERTopic/LDA), including identifying potential inscriptions.
+  * Spatial relationship analysis between erratics using various clustering algorithms (DBSCAN, KMeans, Hierarchical) and nearest neighbor distances.
 - User location tracking for finding nearby erratics.
 - Admin interface for managing erratic data.
 - Responsive design for desktop and mobile viewing.
@@ -32,52 +32,90 @@ This application provides an interactive map interface to explore named glacial 
 - Node.js with Express.js
 - PostgreSQL with PostGIS extension for spatial data storage and querying
 - Sequelize ORM for database interactions
+- Optional: pgvector extension for efficient similarity search on vector embeddings
 - JWT for admin authentication
 - RESTful API architecture
 - Integration with Python scripts (`child_process`) for specific analysis tasks
 
 ### Analysis (Backend/Python Scripts)
-- **Core Libraries:** Python 3.10+, `geopandas`, `shapely`, `pandas`, `numpy`, `psycopg2`.
-- **NLP/ML:** `spacy` (en_core_web_md), `nltk`, `sentence-transformers` (all-MiniLM-L6-v2), `scikit-learn` (for LDA, DBSCAN), potentially `bertopic`, `hdbscan`, `umap` if installed (for advanced topic modeling/clustering).
-- **Data Handling:** Loads data from PostgreSQL/PostGIS and external authoritative GIS sources (HydroSHEDS, Native Land Digital, OSM extracts via Geofabrik, potentially NHGIS, DAART). Downloads and caches external datasets.
+- **Core Libraries:** Python 3.10+, `geopandas`, `shapely`, `pandas`, `numpy`, `psycopg2`, `rasterio` (for DEM processing), `joblib` (for model saving).
+- **NLP/ML:** `spacy` (en_core_web_md), `nltk`, `sentence-transformers` (all-MiniLM-L6-v2), `scikit-learn` (for LDA, DBSCAN, K-Means, Hierarchical Clustering, utilities), `kneed` (for DBSCAN eps estimation), potentially `bertopic`, `hdbscan`, `umap` if installed (for advanced topic modeling).
+- **External Tools:** Requires `ogr2ogr` (part of GDAL) to be installed and available in the system PATH for processing OpenStreetMap PBF data.
+- **Data Handling:** Loads data from PostgreSQL/PostGIS and external authoritative GIS sources (HydroSHEDS, Native Land Digital, OSM extracts via Geofabrik, NHGIS, DAART). Downloads and caches external datasets, including tiled SRTM 90m DEM data via FTP.
+- **Scripts:**
+    - `proximity_analysis.py`: Calculates proximity to various features (water, roads, settlements, native lands, colonial sites) and basic context features (elevation category, accessibility, estimated displacement). Integrates terrain analysis results from `geo_utils.py`.
+    - `clustering.py`: Performs spatial clustering on erratics using DBSCAN, K-Means, or Hierarchical methods based on specified features (coordinates, attributes).
+    - `classify_erratic.py`: Handles NLP tasks: text preprocessing, generating sentence embeddings, training/loading topic models (BERTopic or LDA), classifying erratic usage/significance, and detecting potential inscriptions. Includes separate modes for building/saving models and for classifying individual erratics.
+    - `utils/data_loader.py`: Manages database connections, data fetching from PostgreSQL, downloading/caching external datasets (including OSM PBF processing via `ogr2ogr` and SRTM 90m FTP downloads), and updating the `ErraticAnalyses` table.
+    - `utils/geo_utils.py`: Provides core geospatial functions like distance calculations (Haversine), nearest neighbor search (in GeoDataFrames or via PostGIS), DEM data loading (`rasterio`), elevation/slope/aspect/ruggedness calculations from DEM.
 - **Integration:** Python scripts in `backend/src/scripts/python/` executed by the Node.js backend (`backend/src/services/pythonService.js`) via `child_process`, exchanging data via command-line arguments and JSON output.
 
 ## Setup & Installation
 
 ### Prerequisites
 - Node.js v20.19.0 and npm v10.8.2 (or compatible versions)
-- PostgreSQL 14+ with PostGIS extension enabled
-- Python 3.10+ with necessary geospatial packages installed (e.g., `pip install geopandas shapely`)
+- PostgreSQL 14+ with PostGIS extension enabled (`CREATE EXTENSION postgis;`)
+- **Python 3.10+**
+- **GDAL (with `ogr2ogr` command-line tool):** Needs to be installed on the system and accessible in the PATH. Installation varies by OS (e.g., `sudo apt install gdal-bin` on Ubuntu/Debian, OSGeo4W on Windows, Homebrew on macOS).
+- **Python Packages:** Install via pip:
+  ```bash
+  pip install -r backend/src/scripts/python/requirements.txt
+  ```
+  This includes `geopandas`, `rasterio`, `scikit-learn`, `sentence-transformers`, `bertopic`, etc. See the file for the full list.
+  - *Note:* Installing `geopandas` and `rasterio` can sometimes be complex due to underlying C library dependencies (like GDAL itself). Using Conda (`conda install -c conda-forge geopandas rasterio`) is often recommended.
+  - Download spaCy models: `python -m spacy download en_core_web_md`
+  - Download NLTK data: Run python and execute `import nltk; nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('punkt')`
 
 ### Database Setup
 1. Create a PostgreSQL database (e.g., `glacial_erratics`).
-2. Connect to the database and run `CREATE EXTENSION IF NOT EXISTS postgis;`
-3. Configure connection details in the `.env` file in the `backend/` directory.
+2. **Enable Extensions:** Connect to the database (e.g., using `psql`) and run:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS postgis;
+   -- Optional but recommended for vector similarity search:
+   CREATE EXTENSION IF NOT EXISTS vector; 
+   ```
+3. Configure connection details in the `.env` file in the `backend/` directory (copy from `.env.example`).
 
 ### Installation Steps
-1. Clone the repository
-2. Install dependencies:
-   ```
+1. Clone the repository: `git clone <repository_url>`
+2. Navigate to the project root: `cd iqp-named-erratics`
+3. Install Node.js dependencies for both frontend and backend:
+   ```bash
    npm run install:all
    ```
-3. Set up environment variables:
-   - Copy `.env.example` to `.env` in the backend directory
-   - Update database connection details and JWT secret
-
-4. Initialize the database:
-   ```
+4. Navigate to the backend directory:
+   ```bash
    cd backend
-   npm run db:init
    ```
-
-5. Start the development servers:
+5. Run database migrations to create tables and add columns:
+   ```bash
+   npm run db:migrate 
+   ``` 
+   *(This is crucial for creating the `Erratics` and `ErraticAnalyses` tables with the correct schema)*
+6. Seed the database with initial data (if seeders are available - check `src/seeders/`):
+   ```bash
+   # Example command, adjust if necessary
+   # npx sequelize-cli db:seed:all
    ```
-   npm start
+   (Alternatively, use `npm run db:init` if it handles seeding).
+7. **Optional:** Download large datasets manually if needed (e.g., OSM PBF):
+    - Download `north-america-latest.osm.pbf` (or relevant regional extract) from a source like Geofabrik.
+    - Place it in `backend/src/scripts/python/data/gis/settlements/osm_north_america/`.
+8. **Build Topic Model (One-time or when data updates):** Run the classification script with the `--build-topics` flag to train and save the NLP models. This can take time.
+   ```bash
+   # From the project root directory:
+   python backend/src/scripts/python/classify_erratic.py 1 --build-topics --output temp_build_log.json
    ```
+   *(Note: The erratic ID '1' is just a placeholder and not used for building the model, but required by the current script argument structure. The output file is temporary)*
+9. Start the development servers (from the project root):
+   ```bash
+   npm run dev
+   ```
+   This should start both the backend server and the frontend dev server concurrently.
 
 ## Database Structure
 
-The application uses PostgreSQL with PostGIS, managed by Sequelize. The core data is split into two main related tables: `Erratics` for intrinsic properties and `ErraticAnalyses` for computed analytical data, linked by a one-to-one relationship.
+The application uses PostgreSQL with PostGIS, managed by Sequelize. The core data is split into two main related tables: `Erratics` for intrinsic properties and `ErraticAnalyses` for computed analytical data, linked by a one-to-one relationship (`ErraticAnalyses.erraticId` references `Erratics.id`).
 
 ### Erratic Model (`Erratics` table)
 
@@ -86,8 +124,8 @@ Stores the fundamental, directly observed, or historically recorded information 
 -   **Core Fields:**
     -   `id`: `INTEGER` (Primary Key, Auto-incrementing)
     -   `name`: `STRING` (Name of the erratic)
-    -   `location`: `GEOMETRY('POINT')` (Geographic coordinates)
-    -   `elevation`: `FLOAT` (Elevation in meters)
+    -   `location`: `GEOMETRY('POINT', 4326)` (Geographic coordinates, SRID 4326)
+    -   `elevation`: `FLOAT` (Elevation in meters - often from initial data source)
     -   `size_meters`: `FLOAT` (Approximate size in meters)
     -   `rock_type`: `STRING` (Primary rock composition)
     -   `estimated_age`: `STRING` (Geological age estimate)
@@ -99,30 +137,35 @@ Stores the fundamental, directly observed, or historically recorded information 
 -   **Associations:**
     -   Has many `ErraticMedia`
     -   Has many `ErraticReference`
-    -   Has one `ErraticAnalysis` (links to the computed analysis data)
+    -   Has one `ErraticAnalysis`
 
 ### ErraticAnalysis Model (`ErraticAnalyses` table)
 
-Stores results computed by the backend Python analysis pipeline. Each record is directly associated with an `Erratic` record.
+Stores results computed by the backend Python analysis pipeline. Created/updated by the analysis scripts.
 
 -   **Key Fields:**
     -   `erraticId`: `INTEGER` (Primary Key, Foreign Key referencing `Erratics.id`)
-    -   `usage_type`: `ARRAY(STRING)` (Derived from NLP classification, e.g., "Religious/Ceremonial", "Boundary Marker")
+    -   `usage_type`: `ARRAY(STRING)` (Derived from NLP topic modeling, e.g., "Geological Feature", "Cultural Landmark")
     -   `cultural_significance_score`: `INTEGER` (Score derived from NLP classification or other metrics)
-    -   `has_inscriptions`: `BOOLEAN` (Indicates if the erratic has known inscriptions)
-    -   `accessibility_score`: `INTEGER` (Score based on proximity to roads, settlements, etc.)
+    -   `has_inscriptions`: `BOOLEAN` (Derived from keyword analysis of text fields)
+    -   `accessibility_score`: `INTEGER` (Score [1-5] based on proximity to roads, settlements)
     -   `size_category`: `STRING` (e.g., "Small", "Medium", "Large", "Monumental", based on `size_meters`)
-    -   `nearest_water_body_dist`: `FLOAT` (Distance in meters to the nearest significant water body)
-    -   `nearest_settlement_dist`: `FLOAT` (Distance in meters to the nearest modern settlement)
-    -   `nearest_colonial_settlement_dist`: `FLOAT` (Distance to nearest historical colonial settlement)
-    -   `nearest_road_dist`: `FLOAT` (Distance to nearest modern road)
-    -   `nearest_colonial_road_dist`: `FLOAT` (Distance to nearest historical colonial road)
-    -   `nearest_native_territory_dist`: `FLOAT` (Distance to nearest boundary of a Native/Indigenous territory)
-    -   `elevation_category`: `STRING` (e.g., "Lowland", "Upland", based on elevation and surrounding terrain)
-    -   `geological_type`: `STRING` (Potentially more detailed geological classification)
+    -   `nearest_water_body_dist`: `FLOAT` (Distance in meters to nearest lake/river)
+    -   `nearest_settlement_dist`: `FLOAT` (Distance in meters to nearest modern settlement - OSM based)
+    -   `nearest_colonial_settlement_dist`: `FLOAT` (Distance to nearest historical colonial settlement - NHGIS/Fallback)
+    -   `nearest_road_dist`: `FLOAT` (Distance to nearest modern road - OSM based)
+    -   `nearest_colonial_road_dist`: `FLOAT` (Distance to nearest historical colonial road - DAART/Fallback)
+    -   `nearest_native_territory_dist`: `FLOAT` (Distance to nearest boundary of a Native/Indigenous territory - Native Land Digital)
+    -   `elevation_category`: `STRING` (e.g., "Lowland", "Upland", based on DEM elevation)
+    -   `geological_type`: `STRING` (Potential future field for detailed geological context)
     -   `estimated_displacement_dist`: `FLOAT` (Simplified estimation of glacial transport distance)
-    -   `vector_embedding`: `JSONB` (Currently stores vector embeddings as JSON. Planned to utilize `pgvector`'s `VECTOR` type for optimized similarity searches.)
-    -   `vector_embedding_data`: `JSONB` (Potentially a placeholder or for raw data related to embeddings; its role should be clarified or deprecated if `vector_embedding` is fully implemented with `pgvector`.)
+    -   `vector_embedding`: `VECTOR(384)` or `JSONB` (Vector embedding from sentence transformer. Uses `VECTOR` if pgvector is enabled, otherwise `JSONB`).
+    -   `vector_embedding_data`: `JSONB` (Legacy/Redundant field if `vector_embedding` is used correctly).
+    -   `ruggedness_tri`: `FLOAT` (Terrain Ruggedness Index around the erratic, calculated from DEM)
+    -   `terrain_landform`: `STRING` (Simplified landform classification based on DEM, e.g., 'flat_plain', 'hilly_or_mountainous')
+    -   `terrain_slope_position`: `STRING` (Simplified slope position based on DEM, e.g., 'level', 'mid-slope')
+    -   `createdAt`: `TIMESTAMP WITH TIME ZONE`
+    -   `updatedAt`: `TIMESTAMP WITH TIME ZONE`
 -   **Associations:**
     -   Belongs to `Erratic`
 
@@ -131,17 +174,19 @@ Stores results computed by the backend Python analysis pipeline. Each record is 
 - **ErraticMedia**: Images and other media associated with erratics.
 - **ErraticReference**: Scientific references and sources related to erratics.
 - **User**: Admin user accounts for managing data.
+- **Migration**: Tracks applied database migrations (managed by Sequelize).
 
 ## API Endpoints
 
 ### Public Erratic Endpoints
-- `GET /api/erratics`: Get all erratics.
-- `GET /api/erratics/:id`: Get a specific erratic by ID.
+- `GET /api/erratics`: Get all erratics (potentially with joined analysis data).
+- `GET /api/erratics/:id`: Get a specific erratic by ID (potentially with joined analysis data).
 - `GET /api/erratics/nearby`: Get erratics near a specific location (lat, lng, radius).
 
 ### Public Analysis Endpoints (Trigger Python Scripts)
-- `GET /api/analysis/proximity/:id`: Calculates detailed proximity metrics for a specific erratic against various feature layers (water, settlements, roads, native territories, etc.) and provides contextual analysis (elevation category, accessibility).
-- `GET /api/analysis/classify/:id`: Performs NLP classification on an erratic's text fields, returning topic assignments, significance score, and vector embedding. Requires a pre-built topic model (see admin endpoints).
+- `GET /api/analysis/proximity/:id`: Calculates/retrieves proximity and context metrics for a specific erratic. **(Implementation Status: Backend script `proximity_analysis.py` exists and performs calculations, including terrain. Needs integration with Node.js endpoint and data persistence via `update_erratic_analysis_data`).**
+- `GET /api/analysis/classify/:id`: Classifies an erratic using pre-trained NLP models. **(Implementation Status: Backend script `classify_erratic.py` exists with separate train/classify modes. Needs integration with Node.js endpoint and data persistence via `update_erratic_analysis_data`).**
+- `GET /api/analysis/cluster`: Performs spatial clustering on all erratics. **(Implementation Status: Backend script `clustering.py` exists. Needs Node.js endpoint to trigger it and decide how results are stored/returned).**
 
 ### Protected Admin Endpoints
 - `POST /api/erratics`: Create a new erratic.
@@ -149,8 +194,9 @@ Stores results computed by the backend Python analysis pipeline. Each record is 
 - `DELETE /api/erratics/:id`: Delete an erratic.
 - `POST /api/auth/login`: Admin login.
 - `GET /api/auth/profile`: Get admin profile information.
-- `POST /api/analysis/proximity/batch`: Run proximity analysis for multiple erratic IDs.
-- `POST /api/analysis/classify/batch`: Run NLP classification for multiple erratic IDs (requires pre-built topic model). **Note:** The Python `classify_erratic.py` script includes a `--build-topics` flag, suggesting topic models are built/updated via script execution, likely triggered manually or via an admin process, rather than a dedicated API endpoint for *building* the model itself. Clustering analysis (DBSCAN) seems embedded within `proximity_analysis.py --cluster-analysis` script flag.
+- `POST /api/analysis/proximity/batch`: Trigger proximity analysis for multiple erratic IDs. **(Implementation Status: Requires Node.js endpoint implementation to call `proximity_analysis.py` repeatedly or in batch mode).**
+- `POST /api/analysis/classify/batch`: Trigger NLP classification for multiple erratic IDs. **(Implementation Status: Requires Node.js endpoint implementation to call `classify_erratic.py`).**
+- **Trigger Topic Model Build:** No dedicated endpoint. Requires running `python backend/src/scripts/python/classify_erratic.py --build-topics` manually or via a custom admin action.
 
 ## Frontend Features
 
@@ -175,46 +221,41 @@ The frontend (`HomePage.jsx`) implements a dynamic filtering system allowing use
     -   Has Inscriptions (boolean `has_inscriptions`)
 -   **Extensibility:**
     -   The system is designed to be extensible. New filters based on other intrinsic erratic properties or computed spatial analysis results (from the `ErraticAnalyses` table) can be added by:
-        1.  Ensuring the relevant data fields are fetched with the erratic data in `HomePage.jsx`.
+        1.  Ensuring the relevant data fields (including those from `ErraticAnalyses`) are fetched with the erratic data in `HomePage.jsx`.
         2.  Adding a new entry to `GLOBAL_FILTER_DEFINITIONS` in `HomePage.jsx`, including its UI component.
         3.  Updating the `switch` statement in `filterUtils.js` to include the logic for the new filter type.
-    -   This will allow users to, for example, filter erratics by `accessibility_score`, `elevation_category`, or proximity to colonial roads once these analyses are fully populated and data is available to the frontend.
+    -   This will allow users to, for example, filter erratics by `accessibility_score`, `elevation_category`, `nearest_colonial_road_dist`, etc., once these analyses are fully populated and data is consistently available to the frontend.
 
 ## Spatial Analysis Features
 
 The backend Python scripts provide significant analytical capabilities:
 
 - **Data Integration:** Automatically downloads and utilizes data from key North American GIS sources:
-  * HydroSHEDS (Rivers, Lakes)
-  * Native Land Digital (Territories)
-  * OpenStreetMap Extracts (Settlements, Modern Roads via Geofabrik)
-  * DAART (Colonial Roads - planned/referenced)
-  * NHGIS (Historical Settlements - planned/referenced)
-- **Proximity Metrics:** Calculates Haversine distances to the nearest feature in layers like:
-  * Lakes (HydroLAKES)
-  * Modern Settlements (OSM)
-  * Colonial Settlements (NHGIS/Fallback)
-  * Modern Roads (OSM/Fallback)
-  * Colonial Roads (DAART/Fallback)
-  * Native Territories (Native Land Digital)
+  * HydroSHEDS (Rivers, Lakes - uses PostGIS or file fallback)
+  * Native Land Digital (Territories - currently experiencing access issues, uses API fallback)
+  * OpenStreetMap Extracts (Settlements, Modern Roads - requires PBF file download, uses `ogr2ogr` for processing, has fallback data)
+  * DAART (Colonial Roads - uses GeoJSON download, has fallback data)
+  * NHGIS (Historical Settlements - uses Shapefile download from Zip, has fallback data)
+  * SRTM 90m DEM (Downloads required tiles via FTP, uses `rasterio` for processing)
+- **Proximity Metrics:** Calculates Haversine distances to the nearest feature in various layers.
 - **Contextual Analysis:** Derives attributes based on location and relationships:
-  * `elevation_category`: Classifies elevation (lowland, upland, mountain, etc.).
-  * `accessibility_score`: Rates 1-5 based on distance to nearest road and settlement.
+  * `elevation_category`: Classifies elevation based on DEM data.
+  * `accessibility_score`: Rates 1-5 based on distance to nearest modern road and settlement.
   * `size_category`: Small, Medium, Large, Monumental based on `size_meters`.
-  * `estimated_displacement_dist`: Simplified estimation of glacial transport distance.
-  * Basic terrain/geomorphological context (landform, slope position - using `geo_utils.py` placeholders).
+  * `estimated_displacement_dist`: Simplified estimation of glacial transport distance based on latitude.
+  * Terrain Metrics: Calculates `ruggedness_tri`, `terrain_landform`, `terrain_slope_position` using DEM data via `rasterio`.
 - **NLP Classification & Topic Modeling:**
-  * Combines `description`, `cultural_significance`, and `historical_notes` text fields.
-  * Performs preprocessing (lemmatization, stopword removal) using spaCy/NLTK.
-  * Generates semantic vector embeddings using `sentence-transformers`.
-  * Applies unsupervised topic modeling (BERTopic preferred, fallback to LDA) to discover thematic clusters across the entire dataset's descriptions.
-  * Assigns dominant topics and distributions to individual erratics.
-  * Calculates a simple `cultural_significance_score` based on topic assignment.
+  * Combines `description`, `cultural_significance`, and `historical_notes`.
+  * Preprocesses text using spaCy/NLTK.
+  * Generates sentence embeddings (`sentence-transformers`).
+  * Trains topic models (BERTopic or LDA) via `--build-topics` flag and saves them.
+  * Classifies erratics using loaded models, identifying dominant topic (`usage_type`), `cultural_significance_score`, `has_inscriptions` (keyword-based), and `vector_embedding`.
 - **Inter-Erratic Clustering:**
-  * Calculates an all-pairs distance matrix for erratics.
-  * Uses DBSCAN (via scikit-learn, if available) on coordinates with Haversine metric to identify spatial clusters. Triggered via `proximity_analysis.py --cluster-analysis`.
+  * Script `clustering.py` implements DBSCAN, K-Means, and Hierarchical clustering.
+  * Can cluster based on coordinates or other numerical/vector features.
+  * Calculates Silhouette Score for evaluating cluster quality.
 
-## Methodological Challenges in North American Glacial Erratics Analysis
+## Methodological Challenges & Known Issues
 
 Working with named glacial erratics presents unique methodological challenges for spatial analysis, particularly due to their complex historical, cultural, and geological attributes. Our analysis pipeline must confront these issues to provide meaningful results.
 
@@ -285,6 +326,14 @@ To address these challenges, our data model incorporates:
 * **Special Classification Flags:** For edge cases (meteorite+erratic, composite formations)
 
 These methodological challenges ultimately reveal the rich complexity behind seemingly simple geological features, reinforcing the need for nuanced spatial analysis that respects both precise geospatial relationships and the deep cultural meanings embedded within these natural landmarks.
+
+### Current Known Issues / Areas for Improvement:
+*   **Native Land Digital API:** The current API endpoint (https://nativeland.info/api/index.php?maps=territories) returns a 403 Forbidden error. The script currently falls back gracefully, but this data source is unavailable. The API endpoint or access method may need updating.
+*   **OSM PBF Data:** The PBF processing logic using `ogr2ogr` is implemented in `data_loader.py`, but requires the relevant `.osm.pbf` file (e.g., `north-america-latest.osm.pbf`) to be manually downloaded and placed in the correct directory (`backend/src/scripts/python/data/gis/settlements/osm_north_america/`). Otherwise, the script uses hardcoded fallback data for modern roads and settlements.
+*   **NHGIS Data:** The `load_colonial_settlements` function attempts to find a specific shapefile (`*_place_*.shp`) within the downloaded `nhgis_historical.zip`. This may need adjustment based on the actual contents of the archive to load the correct settlement data instead of the fallback.
+*   **Database Schema Synchronization:** While migrations have been created, ensuring the database schema perfectly matches the Sequelize models (`Erratic.js`, `ErraticAnalysis.js`) is crucial. Future model changes must be accompanied by corresponding migration files.
+*   **Terrain Data:** Uses SRTM 90m data due to availability constraints, not the originally intended 30m. Coverage is limited to below 60 degrees latitude.
+*   **Performance:** Downloading and processing large datasets (PBF, DEM tiles) can be time-consuming on the first run. Caching (using Apache Feather format) mitigates this for subsequent runs. Complex analyses (clustering, topic modeling) can also be computationally intensive.
 
 ## Contributing
 
