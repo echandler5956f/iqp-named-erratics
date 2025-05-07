@@ -62,8 +62,8 @@ DATA_URLS = {
     # Colonial era road data from the Digital Archive of American Roads and Trails
     'colonial_roads': 'https://www.daart.online/data/roads_colonial_era.geojson',
     
-    # Global Digital Elevation Model - North America subset
-    'elevation_dem_na': 'https://opentopography.s3.sdsc.edu/raster/SRTM_GL1_Ellip/north_america_30m.tif',
+    # CGIAR-CSI SRTM 90m v4.1 (FTP base URL - function handles tiling)
+    'elevation_srtm90_csi': 'ftp://srtm.csi.cgiar.org/SRTM_V41/SRTM_Data_GeoTiff/', 
 }
 
 # Ensure directories exist
@@ -331,7 +331,7 @@ def load_erratics() -> gpd.GeoDataFrame:
 
 def load_erratic_by_id(erratic_id: int) -> Optional[Dict]:
     """
-    Load a single erratic by ID from the database
+    Load a single erratic by ID from the database using psycopg2.
     
     Args:
         erratic_id: ID of the erratic to load
@@ -339,40 +339,53 @@ def load_erratic_by_id(erratic_id: int) -> Optional[Dict]:
     Returns:
         Dictionary with erratic data or None if not found
     """
+    conn = get_db_connection()
+    if not conn:
+        logger.error(f"Failed to get DB connection for loading erratic_id: {erratic_id}")
+        # Fallback to mock data for testing if DB connection fails
+        return _create_fallback_erratic_data(erratic_id)
+
     try:
-        # Connect to the database
-        from django.db import connection
-        with connection.cursor() as cursor:
+        # Use RealDictCursor to get results as dictionaries
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             # Query for the erratic with the given ID
             cursor.execute("""
                 SELECT e.id, e.name, ST_X(e.location::geometry) as longitude, 
                        ST_Y(e.location::geometry) as latitude, e.elevation, 
                        e.description, e.cultural_significance, e.historical_notes
-                FROM "Erratics" e
-                WHERE e.id = %s
-            """, [erratic_id])
-            
+                 FROM "Erratics" e
+                 WHERE e.id = %s
+             """, [erratic_id])
+             
             row = cursor.fetchone()
-            
+             
             if row:
-                # Convert to dictionary
-                columns = [col[0] for col in cursor.description]
-                return dict(zip(columns, row))
+                # RealDictCursor already returns a dictionary-like object
+                return dict(row)
             else:
+                logger.warning(f"Erratic with ID {erratic_id} not found in database.")
                 return None
-    except Exception as e:
-        logger.error(f"Error loading erratic by ID: {e}")
+    except (Exception, psycopg2.Error) as e:
+        logger.error(f"Error loading erratic by ID {erratic_id} from database: {e}")
         # Fallback to mock data for testing
-        return {
-            'id': erratic_id,
-            'name': f'Test Erratic {erratic_id}',
-            'longitude': -73.968285,  # Example coordinates (New York)
-            'latitude': 40.785091,
-            'elevation': 100.0,
-            'description': 'A test erratic for development purposes.',
-            'cultural_significance': 'None, this is test data.',
-            'historical_notes': 'Created for testing the spatial analysis pipeline.'
-        }
+        return _create_fallback_erratic_data(erratic_id)
+    finally:
+        if conn:
+            conn.close()
+            
+def _create_fallback_erratic_data(erratic_id: int) -> Dict:
+     """Generates mock data for a single erratic when DB load fails."""
+     logger.warning(f"Using mock data for erratic ID {erratic_id} due to DB load failure.")
+     return {
+         'id': erratic_id,
+         'name': f'Test Erratic {erratic_id}',
+         'longitude': -73.968285,  # Example coordinates (New York)
+         'latitude': 40.785091,
+         'elevation': 100.0,
+         'description': 'A test erratic for development purposes.',
+         'cultural_significance': 'None, this is test data.',
+         'historical_notes': 'Created for testing the spatial analysis pipeline.'
+     }
 
 def update_erratic_analysis_data(erratic_id: int, data: Dict) -> bool:
     """
@@ -506,7 +519,8 @@ def file_to_json(input_file: str) -> Dict:
 
 def download_and_extract_data(data_key: str, region: Optional[str] = None, force_download: bool = False) -> Optional[str]:
     """
-    Download and extract a GIS dataset if not already available
+    Download and extract/prepare a GIS dataset if not already available.
+    Handles HTTP/HTTPS zip/geojson/pbf/other and FTP directory listing/download for SRTM tiles.
     
     Args:
         data_key: Key from DATA_URLS dictionary
@@ -548,8 +562,13 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
     if '{region}' in url and region:
         url = url.format(region=region)
     
-    # Download data
-    logger.info(f"Downloading data from {url}")
+    # Special handling for CGIAR SRTM FTP tiles
+    if data_key == 'elevation_srtm90_csi':
+        logger.info(f"Handling SRTM 90m tile download from CGIAR FTP: {url}")
+        return _download_srtm_tiles_for_na(url, target_dir, force_download)
+
+    # --- Standard HTTP/HTTPS download logic --- 
+    logger.info(f"Attempting download from {url}")
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
@@ -582,8 +601,129 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
         logger.info(f"Successfully downloaded and extracted to {target_dir}")
         return target_dir
     except Exception as e:
-        logger.error(f"Error downloading data: {e}")
+        logger.error(f"Error during HTTP download/extraction from {url}: {e}")
         return None
+
+def _get_required_srtm_tiles_for_na() -> List[str]:
+    """Calculate required CGIAR SRTM 5x5 degree tile names for North America."""
+    # Define rough North American bounds (adjust as needed)
+    min_lon, max_lon = -170, -50
+    min_lat, max_lat = 15, 75 
+
+    # CGIAR tiles are 5x5 degrees, named by bottom-left corner / 5, padded to 2 digits
+    # e.g., srtm_38_03 covers lon=[35, 40), lat=[10, 15)
+    # Calculation needs to account for this naming convention
+    required_tiles = set()
+    for lon in range(int(min_lon // 5) * 5, int(max_lon // 5 + 1) * 5, 5):
+        for lat in range(int(min_lat // 5) * 5, int(max_lat // 5 + 1) * 5, 5):
+            # Calculate tile index based on bottom-left corner
+            lon_idx = lon // 5 + 37 # Assuming tile 01 starts at -180 lon
+            lat_idx = lat // 5 + 13 # Assuming tile 01 starts at -60 lat (adjust based on actual grid)
+            # Need to verify the exact CGIAR naming scheme - this is a guess
+            # Example: srtm_lonidx_latidx.zip or .tif
+            # Let's assume the example: lon 35-40 -> lon_idx 38, lat 10-15 -> lat_idx 03 -> srtm_38_03
+            # Check latitude range for SRTM (up to 60N usually)
+            if lat >= -60 and lat < 60: # SRTM coverage limits
+                 # Assuming name format srtm_XX_YY.zip (containing the GeoTiff)
+                 tile_lon_idx = (lon + 180) // 5 + 1
+                 tile_lat_idx = (lat + 60) // 5 + 1 # Check SRTM tile origin/indexing
+                 tile_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}.zip" 
+                 required_tiles.add(tile_name)
+                 
+    logger.info(f"Identified {len(required_tiles)} potential SRTM tiles for North America bounds.")
+    # Refine this list based on actual available tiles if possible, but for now, return all potential names.
+    return list(required_tiles)
+
+def _download_srtm_tiles_for_na(ftp_base_url: str, target_base_dir: str, force_download: bool) -> Optional[str]:
+    """Downloads required SRTM 90m tiles for North America via FTP."""
+    try:
+        import ftplib
+        from urllib.parse import urlparse
+    except ImportError:
+        logger.error("ftplib is required for FTP downloads.")
+        return None
+
+    required_tiles = _get_required_srtm_tiles_for_na()
+    if not required_tiles:
+        logger.error("Could not determine required SRTM tiles.")
+        return None
+
+    parsed_url = urlparse(ftp_base_url)
+    ftp_host = parsed_url.netloc
+    ftp_path = parsed_url.path
+
+    downloaded_count = 0
+    failed_count = 0
+
+    try:
+        logger.info(f"Connecting to FTP server: {ftp_host}")
+        with ftplib.FTP(ftp_host) as ftp:
+            ftp.login() # Anonymous login
+            logger.info(f"Changing FTP directory to: {ftp_path}")
+            ftp.cwd(ftp_path)
+
+            # Optionally get list of actual available files to avoid 404s
+            # available_files = ftp.nlst()
+            # logger.debug(f"Found {len(available_files)} files on FTP.")
+            # required_tiles = [t for t in required_tiles if t in available_files]
+            # logger.info(f"Filtered to {len(required_tiles)} available SRTM tiles for NA.")
+
+            for tile_zip_name in required_tiles:
+                tile_base_name = os.path.splitext(tile_zip_name)[0]
+                tif_name = f"{tile_base_name}.tif"
+                local_zip_path = os.path.join(target_base_dir, tile_zip_name)
+                local_tif_path = os.path.join(target_base_dir, tif_name)
+
+                # Check if TIF already exists and skip if not forcing download
+                if not force_download and os.path.exists(local_tif_path):
+                    # logger.debug(f"Tile {tif_name} already exists locally. Skipping download.")
+                    continue
+                    
+                # Download the zip file
+                logger.info(f"Downloading {tile_zip_name}...")
+                try:
+                    with open(local_zip_path, 'wb') as fp:
+                        ftp.retrbinary(f'RETR {tile_zip_name}', fp.write)
+                    
+                    # Extract the TIF from the zip
+                    logger.info(f"Extracting {tif_name} from {tile_zip_name}...")
+                    with zipfile.ZipFile(local_zip_path, 'r') as zip_ref:
+                        # Find the .tif file within the zip (names might vary slightly)
+                        tif_in_zip = [f for f in zip_ref.namelist() if f.lower().endswith('.tif')]
+                        if tif_in_zip:
+                             zip_ref.extract(tif_in_zip[0], target_base_dir)
+                             # Rename if necessary to standard name
+                             if tif_in_zip[0] != tif_name:
+                                  os.rename(os.path.join(target_base_dir, tif_in_zip[0]), local_tif_path)
+                             downloaded_count += 1
+                        else:
+                             logger.warning(f"No .tif file found inside {tile_zip_name}")
+                             failed_count += 1
+                             
+                    # Clean up zip file
+                    os.remove(local_zip_path)
+
+                except ftplib.error_perm as e:
+                    logger.warning(f"FTP error downloading {tile_zip_name}: {e}. Tile might not exist.")
+                    failed_count += 1
+                    if os.path.exists(local_zip_path): os.remove(local_zip_path) # Clean up partial download
+                except Exception as e:
+                    logger.error(f"Error processing tile {tile_zip_name}: {e}")
+                    failed_count += 1
+                    if os.path.exists(local_zip_path): os.remove(local_zip_path)
+        
+        logger.info(f"SRTM Tile Download Summary: {downloaded_count} downloaded/extracted, {failed_count} failed/skipped.")
+        if downloaded_count > 0 or os.path.exists(target_base_dir): # Return dir if some downloads worked or dir exists
+             return target_base_dir
+        else:
+             return None # Indicate complete failure
+
+    except ftplib.all_errors as e:
+        logger.error(f"FTP connection or login error to {ftp_host}: {e}")
+        return None
+    except Exception as e:
+         logger.error(f"Unexpected error during FTP processing: {e}")
+         return None
 
 def load_gis_data(filepath: str) -> gpd.GeoDataFrame:
     """

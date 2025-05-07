@@ -37,21 +37,9 @@ from python.utils.data_loader import (
     load_native_territories,
     load_colonial_settlements,
     load_colonial_roads,
-    load_dem_data,
     get_db_connection
 )
-from python.utils.geo_utils import (
-    Point, 
-    haversine_distance, 
-    calculate_distances_to_features,
-    find_nearest_feature,
-    categorize_elevation,
-    get_elevation_category,
-    calculate_landscape_metrics,
-    determine_geomorphological_context,
-    find_nearest_feature_db,
-    get_elevation_at_point
-)
+from python.utils import geo_utils # Simplified import
 
 # North American specific context
 NORTH_AMERICA_BOUNDS = {
@@ -92,7 +80,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     try:
         longitude = erratic.get('longitude')
         latitude = erratic.get('latitude')
-        erratic_point = Point(longitude, latitude)
+        erratic_point = geo_utils.Point(longitude, latitude) # Use module prefix
         logger.info(f"Analyzing erratic at {longitude}, {latitude}")
     except (KeyError, TypeError, ValueError) as e:
         logger.error(f"Invalid location data for erratic: {e}")
@@ -113,7 +101,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     if erratic.get('elevation') is not None:
         try:
             elevation = float(erratic.get('elevation'))
-            elevation_category = get_elevation_category(elevation)
+            elevation_category = geo_utils.get_elevation_category(elevation) # Use module prefix
             results['elevation_category'] = elevation_category
             logger.info(f"Elevation category: {elevation_category} (from {elevation}m)")
         except (ValueError, TypeError) as e:
@@ -137,7 +125,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             logger.info("Querying nearest lake from database...")
             # Assumes a table named 'HydroLAKES' with geometry col 'geom' and 'Hylak_id', 'Lake_name' attributes
             # *** Adjust table_name, geom_col, feature_id_col, attrs_to_select as per your actual DB schema ***
-            lake_feature, lake_dist = find_nearest_feature_db(
+            lake_feature, lake_dist = geo_utils.find_nearest_feature_db(
                 erratic_point, conn, 
                 table_name='HydroLAKES', # <-- Replace with your actual table name for lakes
                 geom_col='geom',        # <-- Replace with your actual geometry column
@@ -155,7 +143,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             water_bodies_gdf = load_hydro_features('lakes')
             if not water_bodies_gdf.empty:
                 logger.info(f"Loaded {len(water_bodies_gdf)} lakes")
-                lake_feature, lake_dist = find_nearest_feature(erratic_point, water_bodies_gdf)
+                lake_feature, lake_dist = geo_utils.find_nearest_feature(erratic_point, water_bodies_gdf) # Use module prefix
                 if lake_dist < nearest_water_dist:
                      nearest_water_dist = lake_dist
                      nearest_water_name = lake_feature.get('Lake_name') if lake_feature else None
@@ -183,7 +171,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             native_territories = load_native_territories()
             if not native_territories.empty:
                 logger.info(f"Loaded {len(native_territories)} native territories")
-                territory, distance = find_nearest_feature(erratic_point, native_territories)
+                territory, distance = geo_utils.find_nearest_feature(erratic_point, native_territories) # Use module prefix
                 
                 if territory:
                     # These are extra informational fields, not directly in ErraticAnalysis model
@@ -207,7 +195,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             settlements = load_settlements('north-america')
             if not settlements.empty:
                 logger.info(f"Loaded {len(settlements)} settlements")
-                settlement, distance = find_nearest_feature(erratic_point, settlements)
+                settlement, distance = geo_utils.find_nearest_feature(erratic_point, settlements) # Use module prefix
                 
                 if settlement:
                     results["nearest_settlement_dist"] = distance
@@ -227,7 +215,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             colonial_settlements = load_colonial_settlements()
             if not colonial_settlements.empty:
                 logger.info(f"Loaded {len(colonial_settlements)} colonial settlements")
-                settlement, distance = find_nearest_feature(erratic_point, colonial_settlements)
+                settlement, distance = geo_utils.find_nearest_feature(erratic_point, colonial_settlements) # Use module prefix
                 
                 if settlement:
                     results["nearest_colonial_settlement_dist"] = distance
@@ -256,7 +244,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             roads = load_roads('north-america', include_historical=False) # This calls load_modern_roads
             if not roads.empty:
                 logger.info(f"Loaded {len(roads)} modern roads")
-                road, distance = find_nearest_feature(erratic_point, roads)
+                road, distance = geo_utils.find_nearest_feature(erratic_point, roads) # Use module prefix
                 
                 results['nearest_road_dist'] = distance if distance != float('inf') else None
                 if road:
@@ -277,7 +265,7 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
             colonial_roads = load_colonial_roads()
             if not colonial_roads.empty:
                 logger.info(f"Loaded {len(colonial_roads)} colonial roads")
-                road, distance = find_nearest_feature(erratic_point, colonial_roads)
+                road, distance = geo_utils.find_nearest_feature(erratic_point, colonial_roads) # Use module prefix
                 
                 if road:
                     results["nearest_colonial_road_dist"] = distance
@@ -296,19 +284,19 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     # --- Terrain Analysis ---
     dem_path = None # Initialize dem_path
     try:
-        dem_path = load_dem_data()
+        dem_path = geo_utils.load_dem_data(point=erratic_point) # Pass point to get specific tile
     except Exception as e:
         logger.error(f"Failed to load DEM data: {e}")
 
     if dem_path:
         try:
             logger.info("Analyzing point elevation...")
-            point_elevation = get_elevation_at_point(erratic_point, dem_path)
+            point_elevation = geo_utils.get_elevation_at_point(erratic_point, dem_path)
             if point_elevation is not None:
                 # Update elevation in results if not already present or if more accurate
                 # The Erratic model might already have an elevation, but DEM provides standardized one
                 results['elevation_dem'] = point_elevation
-                results['elevation_category'] = get_elevation_category(point_elevation)
+                results['elevation_category'] = geo_utils.get_elevation_category(point_elevation) # Use module prefix
                 logger.info(f"Elevation from DEM: {point_elevation:.1f}m (Category: {results['elevation_category']})")
             else:
                 logger.warning("Could not retrieve elevation from DEM for this point.")
@@ -318,8 +306,8 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
         try:
             logger.info("Analyzing terrain context (landscape metrics & geomorphology)...")
             # Use a moderate radius for landscape metrics, adjust as needed
-            landscape_metrics = calculate_landscape_metrics(erratic_point, dem_path, radius_m=500) 
-            geomorphological_context = determine_geomorphological_context(erratic_point, dem_path)
+            landscape_metrics = geo_utils.calculate_landscape_metrics(erratic_point, dem_path, radius_m=500) 
+            geomorphological_context = geo_utils.determine_geomorphological_context(erratic_point, dem_path)
             
             # Add relevant metrics to results if they are calculated
             # Ensure these keys exist in ErraticAnalyses model or are for informational purposes only

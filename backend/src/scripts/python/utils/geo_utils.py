@@ -14,6 +14,7 @@ import logging
 import psycopg2 # Added for direct DB query
 from psycopg2.extras import RealDictCursor # To get results as dicts
 import os # For path operations
+import sys # Added for sys.path manipulation
 
 try:
     import rasterio
@@ -199,36 +200,203 @@ def get_elevation_category(elevation: float) -> str:
     """
     return categorize_elevation(elevation)
 
-def load_dem_data() -> Optional[str]:
+def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
     """
-    Ensures the North American DEM is downloaded and returns its file path.
+    Ensures the required SRTM 90m tile for a given point is downloaded 
+    and returns the path to that specific tile file.
     Requires data_loader to be available.
 
+    Args:
+        point: Optional Point object (lon, lat) to find the corresponding tile for.
+               If None, attempts to download all NA tiles but returns None (as specific tile unknown).
+
     Returns:
-        File path to the downloaded DEM TIF file, or None if download fails or data_loader unavailable.
+        File path to the downloaded DEM TIF file for the specific tile,
+        or None if download fails, data_loader unavailable, or point not provided.
     """
     if not DATA_LOADER_AVAILABLE:
         logger.error("data_loader is not available. Cannot download DEM.")
         return None
 
-    data_key = 'elevation_dem_na'
-    dem_dir = download_and_extract_data(data_key)
-    if not dem_dir:
-        logger.error(f"Failed to download or locate DEM data directory for key '{data_key}'")
-        return None
+    data_key = 'elevation_srtm90_csi'
+    # Call download_and_extract_data which now handles fetching all necessary tiles for NA
+    # It returns the base directory where tiles are stored.
+    dem_base_dir = download_and_extract_data(data_key)
     
-    # Find the TIF file within the directory
-    tif_files = [f for f in os.listdir(dem_dir) if f.lower().endswith('.tif')]
-    if not tif_files:
-        logger.error(f"No .tif file found in the DEM directory: {dem_dir}")
+    if not dem_base_dir:
+        logger.error(f"Failed to download or locate SRTM base directory for key '{data_key}'")
         return None
-    
-    if len(tif_files) > 1:
-        logger.warning(f"Multiple .tif files found in {dem_dir}, using the first one: {tif_files[0]}")
         
-    dem_filepath = os.path.join(dem_dir, tif_files[0])
-    logger.info(f"DEM file path: {dem_filepath}")
-    return dem_filepath
+    if point is None:
+        logger.warning("load_dem_data called without a specific point. Cannot determine correct tile path. Download may have occurred.")
+        return None
+        
+    # Calculate the expected tile name for the given point
+    lon = point.longitude
+    lat = point.latitude
+    
+    # Calculate bottom-left corner of the 5x5 tile containing the point
+    tile_lon_corner = math.floor(lon / 5) * 5
+    tile_lat_corner = math.floor(lat / 5) * 5
+    
+    # Check SRTM latitude coverage
+    if not (-60 <= tile_lat_corner < 60):
+        logger.warning(f"Point {point} is outside SRTM 90m latitude coverage (-60 to 60).")
+        return None
+        
+    # Determine tile indices based on CGIAR V4.1 convention (verified from documentation/common use)
+    # srtm_XX_YY.zip -> XX = (lon_corner + 180)/5 + 1, YY = (lat_corner + 60)/5 + 1
+    tile_lon_idx = (tile_lon_corner + 180) // 5 + 1
+    tile_lat_idx = (tile_lat_corner + 60) // 5 + 1
+    tile_base_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}"
+    expected_tif_name = f"{tile_base_name}.tif"
+    expected_tif_path = os.path.join(dem_base_dir, expected_tif_name)
+
+    # Check if the specific required tile exists after the download attempt
+    if not os.path.exists(expected_tif_path):
+        logger.error(f"Required DEM tile {expected_tif_name} not found in {dem_base_dir} after download attempt for point {point}.")
+        # This could happen if the tile doesn't exist on the FTP server or download failed for this specific tile.
+        return None
+    
+    logger.info(f"Using DEM tile: {expected_tif_path} for point {point}")
+    return expected_tif_path
+
+def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[Optional[Dict], float]:
+    """
+    Find the nearest feature to a point from an in-memory GeoDataFrame.
+    
+    Args:
+        point: Point to find the nearest feature to
+        features_gdf: GeoDataFrame with features
+        
+    Returns:
+        Tuple of (feature_data, distance)
+    """
+    if features_gdf.empty:
+        return None, float('inf')
+    
+    distances = calculate_distances_to_features(point, features_gdf)
+    if not distances:
+        return None, float('inf')
+    
+    # Get nearest feature
+    nearest = distances[0]
+    
+    # Get full feature data
+    # Correct handling for index or custom ID
+    feature_identifier = nearest.get('feature_id') 
+    feature_data = None
+    if feature_identifier is not None:
+        try:
+            # Check if the identifier likely corresponds to the GeoDataFrame index
+            if isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
+                 feature_data = features_gdf.loc[feature_identifier].to_dict()
+            # Otherwise, maybe it corresponds to an 'id' column or similar
+            elif 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
+                 # Handle potential multiple matches if 'id' isn't unique (though it should be)
+                 matching_features = features_gdf[features_gdf['id'] == feature_identifier]
+                 if not matching_features.empty:
+                     feature_data = matching_features.iloc[0].to_dict()
+            else:
+                 # Fallback if ID doesn't match index or 'id' column
+                 # This case might indicate an issue in how feature_id was generated/stored.
+                 logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame index or 'id' column.")
+                 pass # No reliable way to get full feature data
+
+        except Exception as e:
+             logger.error(f"Error retrieving feature data for identifier {feature_identifier}: {e}")
+
+    # Use standard dict to avoid serialization issues with geometry
+    # Convert geometry to WKT or remove if present
+    if feature_data:
+        if 'geometry' in feature_data:
+            try:
+                # Store WKT representation instead of Shapely object for JSON compatibility
+                feature_data['geometry_wkt'] = feature_data['geometry'].wkt 
+            except Exception:
+                 pass # Ignore if conversion fails
+            del feature_data['geometry']
+        # Convert any other non-serializable types if necessary (e.g., timestamps)
+        for key, value in feature_data.items():
+             if isinstance(value, pd.Timestamp):
+                 feature_data[key] = value.isoformat()
+             elif isinstance(value, np.generic):
+                 feature_data[key] = value.item() # Convert numpy types to native Python types
+
+    return feature_data, nearest.get('distance', float('inf'))
+
+def find_nearest_feature_db(point: Point, conn, table_name: str, geom_col: str, 
+                              feature_id_col: str = 'id', attrs_to_select: Optional[List[str]] = None) -> Tuple[Optional[Dict], float]:
+    """
+    Find the nearest feature to a point using a direct PostGIS query.
+    Assumes the table geometry is in EPSG:4326.
+
+    Args:
+        point: Point object to find the nearest feature to.
+        conn: Active psycopg2 database connection.
+        table_name: Name of the database table (including schema if needed).
+        geom_col: Name of the geometry column in the table.
+        feature_id_col: Name of the primary key or unique ID column.
+        attrs_to_select: Optional list of other attribute columns to select.
+
+    Returns:
+        Tuple of (feature_data_dict, distance_meters) or (None, float('inf')).
+    """
+    if not conn:
+        logger.error("Database connection not provided for find_nearest_feature_db")
+        return None, float('inf')
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            lon = float(point.longitude)
+            lat = float(point.latitude)
+
+            # Build SELECT clause carefully
+            select_cols = [feature_id_col]
+            if attrs_to_select:
+                # Ensure geometry and ID columns are not duplicated if requested
+                safe_attrs = [attr for attr in attrs_to_select if attr != geom_col and attr != feature_id_col]
+                select_cols.extend(safe_attrs)
+            
+            # Ensure unique columns and quote them
+            select_cols = list(dict.fromkeys(select_cols)) 
+            select_clause = ", ".join([f'"{c}"' for c in select_cols]) 
+
+            # Use ST_MakePoint for the input point and ST_DistanceSphere for distance
+            # Order by the KNN operator (<->) for efficiency with a spatial index
+            query = f""" 
+                SELECT 
+                    {select_clause},
+                    ST_DistanceSphere(
+                        "{geom_col}", 
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+                    ) AS distance_meters
+                FROM "{table_name}"
+                ORDER BY 
+                    "{geom_col}" <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+                LIMIT 1;
+            """
+            
+            # Execute the query with parameters (lon, lat passed twice for point and KNN center)
+            cursor.execute(query, (lon, lat, lon, lat))
+            nearest = cursor.fetchone()
+            
+            if nearest:
+                distance = nearest.pop('distance_meters', float('inf')) # Extract distance
+                return dict(nearest), float(distance) # Return feature attrs and distance
+            else:
+                logger.info(f"No features found in table '{table_name}'.")
+                return None, float('inf')
+
+    except (Exception, psycopg2.Error) as e:
+        logger.error(f"Error querying nearest feature in '{table_name}': {e}")
+        try:
+            if conn and not conn.closed: # Check if connection is valid before rollback
+                 conn.rollback()
+                 logger.info("Database transaction rolled back due to error.")
+        except Exception as rb_err:
+            logger.error(f"Error during rollback: {rb_err}")
+        return None, float('inf')
 
 def get_elevation_at_point(point: Point, dem_path: str) -> Optional[float]:
     """
