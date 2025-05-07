@@ -11,7 +11,7 @@ import geopandas as gpd
 from shapely.geometry import Point
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
 import requests
 import zipfile
 import tempfile
@@ -23,6 +23,7 @@ import hashlib
 import pyarrow.feather as feather
 from dotenv import load_dotenv, find_dotenv
 import subprocess # Added for ogr2ogr
+import math
 try:
     from shapely.wkb import loads as wkb_loads, dumps as wkb_dumps
 except ImportError:
@@ -288,17 +289,25 @@ def load_erratics() -> gpd.GeoDataFrame:
         # or specify `geom_col` parameter. Using 'location' as the geometry column.
         query = """
         SELECT 
-            id, name, 
-            location, -- Select the geometry column directly
-            elevation, size_meters, rock_type, 
-            estimated_age, discovery_date, description,
-            cultural_significance, historical_notes,
-            usage_type, cultural_significance_score,
-            has_inscriptions, accessibility_score,
-            size_category, nearest_water_body_dist,
-            nearest_settlement_dist, elevation_category,
-            geological_type, estimated_displacement_dist
-        FROM "Erratics"
+            e.id, e.name, 
+            e.location, -- Select the geometry column directly from Erratics
+            e.elevation, e.size_meters, e.rock_type, 
+            e.estimated_age, e.discovery_date, e.description,
+            e.cultural_significance, e.historical_notes,
+            -- Fields from ErraticAnalyses table
+            ea.usage_type, ea.cultural_significance_score,
+            ea.has_inscriptions, ea.accessibility_score,
+            ea.size_category, ea.nearest_water_body_dist,
+            ea.nearest_settlement_dist, ea.elevation_category
+            -- Removed potentially missing columns based on repeated DB errors:
+            -- ea.nearest_colonial_settlement_dist, ea.nearest_road_dist,
+            -- ea.nearest_colonial_road_dist, ea.nearest_native_territory_dist, 
+            -- ea.geological_type, ea.estimated_displacement_dist,
+            -- ea.vector_embedding, ea.vector_embedding_data
+        FROM 
+            "Erratics" e
+        LEFT JOIN 
+            "ErraticAnalyses" ea ON e.id = ea."erraticId"
         """
         
         gdf = gpd.read_postgis(query, conn, geom_col='location', crs='EPSG:4326') # Assuming source CRS is 4326
@@ -353,12 +362,12 @@ def load_erratic_by_id(erratic_id: int) -> Optional[Dict]:
                 SELECT e.id, e.name, ST_X(e.location::geometry) as longitude, 
                        ST_Y(e.location::geometry) as latitude, e.elevation, 
                        e.description, e.cultural_significance, e.historical_notes
-                 FROM "Erratics" e
-                 WHERE e.id = %s
-             """, [erratic_id])
-             
+                FROM "Erratics" e
+                WHERE e.id = %s
+            """, [erratic_id])
+            
             row = cursor.fetchone()
-             
+            
             if row:
                 # RealDictCursor already returns a dictionary-like object
                 return dict(row)
@@ -517,7 +526,7 @@ def file_to_json(input_file: str) -> Dict:
         print(f"Error reading from {input_file}: {e}")
         return {}
 
-def download_and_extract_data(data_key: str, region: Optional[str] = None, force_download: bool = False) -> Optional[str]:
+def download_and_extract_data(data_key: str, region: Optional[str] = None, force_download: bool = False, point: Optional[Any] = None) -> Optional[str]:
     """
     Download and extract/prepare a GIS dataset if not already available.
     Handles HTTP/HTTPS zip/geojson/pbf/other and FTP directory listing/download for SRTM tiles.
@@ -526,9 +535,10 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
         data_key: Key from DATA_URLS dictionary
         region: Optional region parameter for region-specific data
         force_download: Force re-download even if file exists
+        point: Optional Point object needed for tiled datasets like SRTM.
         
     Returns:
-        Path to the extracted data directory or None if failed
+        Path to the extracted data directory or file, or None if failed
     """
     # Build target path
     subdir = 'default'
@@ -546,11 +556,12 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
         subdir = 'colonial'
     
     target_dir = os.path.join(GIS_DATA_DIR, subdir, data_key)
-    if os.path.exists(target_dir) and not force_download:
+    # For tiled data like SRTM, the existence check needs to be more specific later
+    if data_key != 'elevation_srtm90_csi' and os.path.exists(target_dir) and not force_download:
         logger.info(f"Data already exists at {target_dir}")
         return target_dir
     
-    # Create target directory
+    # Ensure target directory exists (even if checking for specific file later)
     os.makedirs(target_dir, exist_ok=True)
     
     # Get URL, handle region-specific URLs
@@ -565,8 +576,12 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
     # Special handling for CGIAR SRTM FTP tiles
     if data_key == 'elevation_srtm90_csi':
         logger.info(f"Handling SRTM 90m tile download from CGIAR FTP: {url}")
-        return _download_srtm_tiles_for_na(url, target_dir, force_download)
-
+        if point is None:
+            logger.error("A specific point location is required to download the correct SRTM tile.")
+            return None
+        # Pass the point object to the download function
+        return _download_srtm_tile_for_point(url, target_dir, force_download, point)
+    
     # --- Standard HTTP/HTTPS download logic --- 
     logger.info(f"Attempting download from {url}")
     try:
@@ -586,15 +601,11 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
                 zip_ref.extractall(target_dir)
             os.unlink(tmp_path)
         elif url.endswith('.pbf'):
-            # For OSM PBF files, we need to convert them to GeoJSON or Shapefile
-            # This would require osmium or a similar tool in a full implementation
             logger.warning(f"PBF files require additional processing. Storing as-is for now.")
             os.rename(tmp_path, os.path.join(target_dir, os.path.basename(url)))
         elif url.endswith('.geojson'):
-            # Just move the GeoJSON file
             os.rename(tmp_path, os.path.join(target_dir, os.path.basename(url)))
         else:
-            # Just move the file
             file_name = url.split('/')[-1]
             os.rename(tmp_path, os.path.join(target_dir, file_name))
         
@@ -604,38 +615,28 @@ def download_and_extract_data(data_key: str, region: Optional[str] = None, force
         logger.error(f"Error during HTTP download/extraction from {url}: {e}")
         return None
 
-def _get_required_srtm_tiles_for_na() -> List[str]:
-    """Calculate required CGIAR SRTM 5x5 degree tile names for North America."""
-    # Define rough North American bounds (adjust as needed)
-    min_lon, max_lon = -170, -50
-    min_lat, max_lat = 15, 75 
+def _get_srtm_tile_name_for_point(point: Any) -> Optional[str]:
+    """Calculate the CGIAR SRTM 5x5 degree tile name for a specific point."""
+    lon = point.longitude
+    lat = point.latitude
+    
+    # Calculate bottom-left corner of the 5x5 tile containing the point
+    tile_lon_corner = math.floor(lon / 5) * 5
+    tile_lat_corner = math.floor(lat / 5) * 5
+    
+    # Check SRTM latitude coverage
+    if not (-60 <= tile_lat_corner < 60):
+        logger.warning(f"Point {point} is outside SRTM 90m latitude coverage (-60 to 60).")
+        return None
 
-    # CGIAR tiles are 5x5 degrees, named by bottom-left corner / 5, padded to 2 digits
-    # e.g., srtm_38_03 covers lon=[35, 40), lat=[10, 15)
-    # Calculation needs to account for this naming convention
-    required_tiles = set()
-    for lon in range(int(min_lon // 5) * 5, int(max_lon // 5 + 1) * 5, 5):
-        for lat in range(int(min_lat // 5) * 5, int(max_lat // 5 + 1) * 5, 5):
-            # Calculate tile index based on bottom-left corner
-            lon_idx = lon // 5 + 37 # Assuming tile 01 starts at -180 lon
-            lat_idx = lat // 5 + 13 # Assuming tile 01 starts at -60 lat (adjust based on actual grid)
-            # Need to verify the exact CGIAR naming scheme - this is a guess
-            # Example: srtm_lonidx_latidx.zip or .tif
-            # Let's assume the example: lon 35-40 -> lon_idx 38, lat 10-15 -> lat_idx 03 -> srtm_38_03
-            # Check latitude range for SRTM (up to 60N usually)
-            if lat >= -60 and lat < 60: # SRTM coverage limits
-                 # Assuming name format srtm_XX_YY.zip (containing the GeoTiff)
-                 tile_lon_idx = (lon + 180) // 5 + 1
-                 tile_lat_idx = (lat + 60) // 5 + 1 # Check SRTM tile origin/indexing
-                 tile_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}.zip" 
-                 required_tiles.add(tile_name)
-                 
-    logger.info(f"Identified {len(required_tiles)} potential SRTM tiles for North America bounds.")
-    # Refine this list based on actual available tiles if possible, but for now, return all potential names.
-    return list(required_tiles)
+    # Determine tile indices based on CGIAR V4.1 convention
+    tile_lon_idx = (tile_lon_corner + 180) // 5 + 1
+    tile_lat_idx = (tile_lat_corner + 60) // 5 + 1
+    tile_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}.zip" 
+    return tile_name
 
-def _download_srtm_tiles_for_na(ftp_base_url: str, target_base_dir: str, force_download: bool) -> Optional[str]:
-    """Downloads required SRTM 90m tiles for North America via FTP."""
+def _download_srtm_tile_for_point(ftp_base_url: str, target_base_dir: str, force_download: bool, point: Any) -> Optional[str]:
+    """Downloads the required SRTM 90m tile for a specific point via FTP."""
     try:
         import ftplib
         from urllib.parse import urlparse
@@ -643,87 +644,78 @@ def _download_srtm_tiles_for_na(ftp_base_url: str, target_base_dir: str, force_d
         logger.error("ftplib is required for FTP downloads.")
         return None
 
-    required_tiles = _get_required_srtm_tiles_for_na()
-    if not required_tiles:
-        logger.error("Could not determine required SRTM tiles.")
+    # Get the single required tile name
+    tile_zip_name = _get_srtm_tile_name_for_point(point)
+    if not tile_zip_name:
+        logger.error("Could not determine required SRTM tile.")
         return None
 
     parsed_url = urlparse(ftp_base_url)
     ftp_host = parsed_url.netloc
     ftp_path = parsed_url.path
 
-    downloaded_count = 0
-    failed_count = 0
+    # Define paths for the specific tile
+    tile_base_name = os.path.splitext(tile_zip_name)[0]
+    tif_name = f"{tile_base_name}.tif"
+    local_zip_path = os.path.join(target_base_dir, tile_zip_name)
+    local_tif_path = os.path.join(target_base_dir, tif_name)
+
+    # Check if TIF already exists and skip if not forcing download
+    if not force_download and os.path.exists(local_tif_path):
+        logger.info(f"Tile {tif_name} already exists locally. Skipping download.")
+        return target_base_dir # Return directory path even if skipped
 
     try:
         logger.info(f"Connecting to FTP server: {ftp_host}")
         with ftplib.FTP(ftp_host) as ftp:
             ftp.login() # Anonymous login
             logger.info(f"Changing FTP directory to: {ftp_path}")
-            ftp.cwd(ftp_path)
+            try:
+                 ftp.cwd(ftp_path)
+            except ftplib.error_perm as e:
+                 logger.error(f"FTP CWD failed for path {ftp_path}: {e}")
+                 return None
 
-            # Optionally get list of actual available files to avoid 404s
-            # available_files = ftp.nlst()
-            # logger.debug(f"Found {len(available_files)} files on FTP.")
-            # required_tiles = [t for t in required_tiles if t in available_files]
-            # logger.info(f"Filtered to {len(required_tiles)} available SRTM tiles for NA.")
+            # Download the specific required zip file
+            logger.info(f"Attempting to download {tile_zip_name}...")
+            try:
+                with open(local_zip_path, 'wb') as fp:
+                    ftp.retrbinary(f'RETR {tile_zip_name}', fp.write)
+                
+                # Extract the TIF from the zip
+                logger.info(f"Extracting {tif_name} from {tile_zip_name}...")
+                with zipfile.ZipFile(local_zip_path, 'r') as zip_ref:
+                    # Find the .tif file within the zip (names might vary slightly)
+                    tif_in_zip = [f for f in zip_ref.namelist() if f.lower().endswith('.tif')]
+                    if tif_in_zip:
+                            zip_ref.extract(tif_in_zip[0], target_base_dir)
+                            # Rename if necessary to standard name
+                            extracted_tif_path = os.path.join(target_base_dir, tif_in_zip[0])
+                            if extracted_tif_path != local_tif_path:
+                                os.rename(extracted_tif_path, local_tif_path)
+                            logger.info(f"Successfully downloaded and extracted {tif_name}.")
+                    else:
+                            logger.warning(f"No .tif file found inside {tile_zip_name}")
+                            # Remove the useless zip
+                            os.remove(local_zip_path)
+                            return None # Indicate failure for this tile
+                            
+                # Clean up zip file
+                os.remove(local_zip_path)
+                return target_base_dir # Success, return directory containing the TIF
 
-            for tile_zip_name in required_tiles:
-                tile_base_name = os.path.splitext(tile_zip_name)[0]
-                tif_name = f"{tile_base_name}.tif"
-                local_zip_path = os.path.join(target_base_dir, tile_zip_name)
-                local_tif_path = os.path.join(target_base_dir, tif_name)
-
-                # Check if TIF already exists and skip if not forcing download
-                if not force_download and os.path.exists(local_tif_path):
-                    # logger.debug(f"Tile {tif_name} already exists locally. Skipping download.")
-                    continue
-                    
-                # Download the zip file
-                logger.info(f"Downloading {tile_zip_name}...")
-                try:
-                    with open(local_zip_path, 'wb') as fp:
-                        ftp.retrbinary(f'RETR {tile_zip_name}', fp.write)
-                    
-                    # Extract the TIF from the zip
-                    logger.info(f"Extracting {tif_name} from {tile_zip_name}...")
-                    with zipfile.ZipFile(local_zip_path, 'r') as zip_ref:
-                        # Find the .tif file within the zip (names might vary slightly)
-                        tif_in_zip = [f for f in zip_ref.namelist() if f.lower().endswith('.tif')]
-                        if tif_in_zip:
-                             zip_ref.extract(tif_in_zip[0], target_base_dir)
-                             # Rename if necessary to standard name
-                             if tif_in_zip[0] != tif_name:
-                                  os.rename(os.path.join(target_base_dir, tif_in_zip[0]), local_tif_path)
-                             downloaded_count += 1
-                        else:
-                             logger.warning(f"No .tif file found inside {tile_zip_name}")
-                             failed_count += 1
-                             
-                    # Clean up zip file
-                    os.remove(local_zip_path)
-
-                except ftplib.error_perm as e:
-                    logger.warning(f"FTP error downloading {tile_zip_name}: {e}. Tile might not exist.")
-                    failed_count += 1
-                    if os.path.exists(local_zip_path): os.remove(local_zip_path) # Clean up partial download
-                except Exception as e:
-                    logger.error(f"Error processing tile {tile_zip_name}: {e}")
-                    failed_count += 1
-                    if os.path.exists(local_zip_path): os.remove(local_zip_path)
-        
-        logger.info(f"SRTM Tile Download Summary: {downloaded_count} downloaded/extracted, {failed_count} failed/skipped.")
-        if downloaded_count > 0 or os.path.exists(target_base_dir): # Return dir if some downloads worked or dir exists
-             return target_base_dir
-        else:
-             return None # Indicate complete failure
+            except ftplib.error_perm as e:
+                logger.warning(f"FTP error downloading {tile_zip_name}: {e}. Tile might not exist on server.")
+                if os.path.exists(local_zip_path): os.remove(local_zip_path) 
+                return None # Indicate failure
+            except Exception as e:
+                logger.error(f"Error processing tile {tile_zip_name}: {e}")
+                if os.path.exists(local_zip_path): os.remove(local_zip_path)
+                return None # Indicate failure
 
     except ftplib.all_errors as e:
         logger.error(f"FTP connection or login error to {ftp_host}: {e}")
         return None
-    except Exception as e:
-         logger.error(f"Unexpected error during FTP processing: {e}")
-         return None
 
 def load_gis_data(filepath: str) -> gpd.GeoDataFrame:
     """
@@ -1095,7 +1087,7 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
                 geometry='geometry',
                 crs="EPSG:4326"
             )
-
+    
     data_key = 'colonial_roads'
     # The expected filename is the basename of the URL.
     expected_filename = os.path.basename(DATA_URLS[data_key]) # e.g., 'roads_colonial_era.geojson'
@@ -1116,8 +1108,6 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
 
     logger.info(f"Attempting to download and load colonial roads data from source: {DATA_URLS[data_key]}")
     
-    # download_and_extract_data will download the file into expected_data_dir if it's a direct link like GeoJSON
-    # It returns the path to the directory `data_key` (e.g., .../gis/roads/colonial_roads)
     download_target_dir = download_and_extract_data(data_key)
     
     if not download_target_dir:
@@ -1126,7 +1116,6 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
         _cache_gdf(fallback_gdf.copy(), cache_filepath) # Cache the fallback
         return fallback_gdf
     
-    # The actual file should be at expected_filepath
     if not os.path.exists(expected_filepath):
         # This case should ideally not happen if download_and_extract_data works as expected for GeoJSON
         logger.warning(f"Colonial roads file {expected_filepath} not found after download attempt. Using fallback.")
@@ -1143,7 +1132,7 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
             logger.warning(f"Loaded colonial roads dataset from {expected_filepath} is empty. Using fallback.")
             fallback_gdf = _create_fallback_colonial_roads()
             # Cache the fallback under the main function's cache_filepath
-            _cache_gdf(fallback_gdf.copy(), cache_filepath) 
+            _cache_gdf(fallback_gdf.copy(), cache_filepath)
             return fallback_gdf
         
         # Ensure CRS (load_gis_data should handle, but good to be explicit)
@@ -1169,7 +1158,7 @@ def load_settlements(region: Optional[str] = 'north-america') -> gpd.GeoDataFram
     Load settlement data for a specified region using OpenStreetMap PBF data,
     processed via ogr2ogr. Falls back to simplified hardcoded data if PBF processing fails.
     Uses a multi-level caching system (processed GeoJSON, then final GeoDataFrame).
-
+    
     Args:
         region: Region key ('us', 'canada', 'north-america') to load data for.
         
@@ -1182,7 +1171,7 @@ def load_settlements(region: Optional[str] = 'north-america') -> gpd.GeoDataFram
         pbf_data_key = 'osm_us'
     elif region == 'canada':
         pbf_data_key = 'osm_canada'
-    else: 
+    else:
         pbf_data_key = 'osm_north_america'
         region = 'north-america' 
 
@@ -1285,15 +1274,19 @@ def _create_fallback_settlements(region: str) -> gpd.GeoDataFrame:
     conceptual_source_path = os.path.join(CACHE_DIR, f"conceptual_fallback_source_{fallback_cache_key_filename}")
     cache_filepath = _get_cache_path(conceptual_source_path, params={'region': region, 'type': 'fallback_settlements'})
 
+    # Try loading from cache first to avoid regeneration if already created by a previous fallback
     if os.path.exists(cache_filepath):
         try:
             logger.info(f"Loading fallback settlements for region '{region}' from cache: {cache_filepath}")
             df = feather.read_feather(cache_filepath)
-            crs = None; crs_path = cache_filepath + ".crs"
+            crs = None
+            crs_path = cache_filepath + ".crs"
             if os.path.exists(crs_path):
                 with open(crs_path, 'r') as f: crs = f.read().strip()
+            
             if '_wkb' in df.columns:
-                geom_col = 'geometry'; geom_col_path = cache_filepath + ".geom_col"
+                geom_col = 'geometry'
+                geom_col_path = cache_filepath + ".geom_col"
                 if os.path.exists(geom_col_path):
                     with open(geom_col_path, 'r') as f: geom_col = f.read().strip()
                 df[geom_col] = df['_wkb'].apply(lambda wkb: wkb_loads(wkb) if wkb else None)
@@ -1302,16 +1295,19 @@ def _create_fallback_settlements(region: str) -> gpd.GeoDataFrame:
             else:
                 gdf = gpd.GeoDataFrame(df, crs=crs)
 
+            # Ensure geometry column is correctly set
             if 'geometry' in gdf.columns and isinstance(gdf.geometry, gpd.GeoSeries):
-                 gdf = gdf.set_geometry('geometry')
+                gdf = gdf.set_geometry('geometry')
             elif not gdf.empty:
-                 geom_cols = [col for col in gdf.columns if isinstance(gdf[col], gpd.array.GeometryArray)]
-                 if geom_cols: gdf = gdf.set_geometry(geom_cols[0])
-
+                geom_cols = [col for col in gdf.columns if isinstance(gdf[col], gpd.array.GeometryArray)]
+                if geom_cols: gdf = gdf.set_geometry(geom_cols[0])
+            
             if gdf.crs is None: gdf.crs = "EPSG:4326"
             return gdf
+        # Add missing except block:
         except Exception as e:
             logger.error(f"Error loading fallback settlements from cache {cache_filepath}: {e}. Regenerating.")
+            # Fall through to regenerate if cache load fails
     
     sample_data = {
         'osm_id': list(range(1, 51)),
@@ -1378,7 +1374,7 @@ def load_modern_roads(region: Optional[str] = 'north-america') -> gpd.GeoDataFra
     Load modern road data for a specified region using OpenStreetMap PBF data,
     processed via ogr2ogr. Falls back to simplified hardcoded data if PBF processing fails.
     Uses a multi-level caching system.
-
+    
     Args:
         region: Region key ('us', 'canada', 'north-america') to load data for.
         
@@ -1499,7 +1495,7 @@ def _create_fallback_modern_roads(region: str) -> gpd.GeoDataFrame:
             return gdf
         except Exception as e:
             logger.error(f"Error loading fallback modern roads from cache {cache_filepath}: {e}. Regenerating.")
-
+            
     roads_data = {
         'osm_id': list(range(1, 21)),
         'name': ['Interstate 95', 'Interstate 80', 'Interstate 10', 'Interstate 5', 'Trans-Canada Highway', 'Mexico Federal Highway 85', 'US Route 1', 'US Route 66', 'US Route 101', 'Mexico Federal Highway 15', 'I-90', 'I-70', 'I-40', 'I-35', 'Highway 401', 'Interstate 25', 'US Route 2', 'Mexico Federal Highway 45', 'Canada Highway 16', 'Pan-American Highway'],

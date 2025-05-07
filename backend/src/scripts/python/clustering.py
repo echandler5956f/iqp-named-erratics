@@ -76,10 +76,8 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
         results["error"] = "scikit-learn not installed"
         return results
 
-    # Use projected coordinates for distance calculation if possible, otherwise use haversine on lat/lon
-    # For simplicity with DBSCAN's `metric` param, we'll use lat/lon with haversine for now.
-    # A projected CRS would be better for Euclidean distance based eps.
-    coords = np.radians(erratics_gdf[['geometry']].apply(lambda p: (p.geometry.y, p.geometry.x), axis=1).tolist()) # Lat, Lon in radians
+    # Access active geometry column directly and extract coordinates
+    coords = np.radians(erratics_gdf.geometry.apply(lambda p: (p.y, p.x)).tolist()) # Lat, Lon in radians
 
     calculated_eps = eps
     if calculated_eps is None:
@@ -198,20 +196,32 @@ def perform_kmeans_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: int = 
 
     # Prepare data
     try:
-        if 'longitude' in features and 'latitude' in features and 'geometry' in erratics_gdf.columns:
-            # Use geometry coordinates directly if requested
-            data_for_clustering = erratics_gdf[['geometry']].apply(lambda p: [p.geometry.x, p.geometry.y], axis=1, result_type='expand')
-            data_for_clustering.columns = ['longitude', 'latitude']
-             # Combine with other features if requested
-            other_features = [f for f in features if f not in ['longitude', 'latitude']]
-            if other_features:
-                 data_for_clustering = pd.concat([data_for_clustering, erratics_gdf[other_features]], axis=1)
-            # Ensure final feature list matches request order if important
-            data_for_clustering = data_for_clustering[features] 
-        else:
-             data_for_clustering = erratics_gdf[features].copy()
+        # Check if geometry-based features are requested
+        use_geom_x = 'longitude' in features
+        use_geom_y = 'latitude' in features
+        other_features = [f for f in features if f not in ['longitude', 'latitude']]
 
-        data_for_clustering.dropna(inplace=True) # Drop rows with NaNs in selected features
+        data_frames_to_concat = []
+        if use_geom_x:
+            data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
+        if use_geom_y:
+            data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
+        if other_features:
+            # Check if other requested features exist
+            missing_features = [f for f in other_features if f not in erratics_gdf.columns]
+            if missing_features:
+                raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
+            data_frames_to_concat.append(erratics_gdf[other_features])
+
+        if not data_frames_to_concat:
+             raise ValueError("No valid features selected for clustering.")
+             
+        data_for_clustering = pd.concat(data_frames_to_concat, axis=1)
+
+        # Reorder columns to match requested feature order if necessary
+        data_for_clustering = data_for_clustering[features]
+       
+        data_for_clustering.dropna(inplace=True) # Drop rows with NaNs in selected/derived features
         ids_for_clustering = erratics_gdf.loc[data_for_clustering.index, 'id']
 
         if len(data_for_clustering) < n_clusters:
@@ -300,15 +310,26 @@ def perform_hierarchical_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: 
         
     # Prepare data (similar to K-Means)
     try:
-        if 'longitude' in features and 'latitude' in features and 'geometry' in erratics_gdf.columns:
-            data_for_clustering = erratics_gdf[['geometry']].apply(lambda p: [p.geometry.x, p.geometry.y], axis=1, result_type='expand')
-            data_for_clustering.columns = ['longitude', 'latitude']
-            other_features = [f for f in features if f not in ['longitude', 'latitude']]
-            if other_features:
-                 data_for_clustering = pd.concat([data_for_clustering, erratics_gdf[other_features]], axis=1)
-            data_for_clustering = data_for_clustering[features]
-        else:
-             data_for_clustering = erratics_gdf[features].copy()
+        use_geom_x = 'longitude' in features
+        use_geom_y = 'latitude' in features
+        other_features = [f for f in features if f not in ['longitude', 'latitude']]
+
+        data_frames_to_concat = []
+        if use_geom_x:
+            data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
+        if use_geom_y:
+            data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
+        if other_features:
+            missing_features = [f for f in other_features if f not in erratics_gdf.columns]
+            if missing_features:
+                raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
+            data_frames_to_concat.append(erratics_gdf[other_features])
+
+        if not data_frames_to_concat:
+             raise ValueError("No valid features selected for clustering.")
+             
+        data_for_clustering = pd.concat(data_frames_to_concat, axis=1)
+        data_for_clustering = data_for_clustering[features] # Reorder
 
         data_for_clustering.dropna(inplace=True)
         ids_for_clustering = erratics_gdf.loc[data_for_clustering.index, 'id']
@@ -336,18 +357,17 @@ def perform_hierarchical_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: 
         affinity = 'euclidean'
         if linkage != 'ward' and 'latitude' in features: # Use haversine for geographic coords if not Ward
              affinity = 'haversine' 
-             # Caution: AgglomerativeClustering with haversine might be slow
-             # Use scaled_data? Haversine expects radians lat/lon, not scaled arbitrary features.
-             # Revert to euclidean for simplicity if features != [lon, lat]
-             if features != ['longitude', 'latitude']:
+             # Check if ONLY using geographic coordinates
+             if set(features) != {'longitude', 'latitude'}:
                  logger.warning(f"Using euclidean distance for linkage '{linkage}' with mixed features. Consider feature engineering.")
                  affinity = 'euclidean'
              else:
                  # Use radians for haversine
-                 coords = np.radians(data_for_clustering[['latitude', 'longitude']].values) 
-                 scaled_data = coords # Use radians directly for haversine
+                 # Ensure columns are in lat, lon order for haversine if using coords directly
+                 coords_for_haversine = data_for_clustering[['latitude', 'longitude']].values
+                 scaled_data = np.radians(coords_for_haversine) # Use radians directly for haversine
         
-        model = AgglomerativeClustering(n_clusters=n_clusters, affinity=affinity, linkage=linkage)
+        model = AgglomerativeClustering(n_clusters=n_clusters, linkage=linkage, affinity=affinity)
         cluster_labels = model.fit_predict(scaled_data)
         
         results["assignments"] = {int(ids_for_clustering.iloc[i]): int(label) for i, label in enumerate(cluster_labels)}
@@ -395,6 +415,13 @@ def main():
     logger.info(f"Loading all erratic data for clustering...")
     erratics_gdf = load_erratics()
     
+    # Debug: Print columns to check if 'geometry' exists
+    if not erratics_gdf.empty:
+        print("Columns in loaded GeoDataFrame:", erratics_gdf.columns)
+        print("Active geometry column:", erratics_gdf.geometry.name)
+    else:
+        print("Loaded GeoDataFrame is empty.")
+        
     if erratics_gdf.empty:
         logger.error("No erratics data loaded. Cannot perform clustering.")
         results = {"error": "No erratic data available"}

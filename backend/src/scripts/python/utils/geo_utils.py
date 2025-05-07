@@ -221,7 +221,7 @@ def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
     data_key = 'elevation_srtm90_csi'
     # Call download_and_extract_data which now handles fetching all necessary tiles for NA
     # It returns the base directory where tiles are stored.
-    dem_base_dir = download_and_extract_data(data_key)
+    dem_base_dir = download_and_extract_data(data_key, point=point)
     
     if not dem_base_dir:
         logger.error(f"Failed to download or locate SRTM base directory for key '{data_key}'")
