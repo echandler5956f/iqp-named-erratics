@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const Sequelize = require('sequelize');
+const process = require('process');
 const basename = path.basename(__filename);
-const env = process.env.NODE_ENV || 'development';
 const db = {};
 
 // Get connection parameters from environment variables
@@ -19,7 +19,7 @@ console.log(`User: ${dbUser}`);
 console.log(`Host: ${dbHost}:${dbPort}`);
 console.log(`Password length: ${dbPassword ? dbPassword.length : 0}`);
 
-// Create Sequelize instance with database config from environment variables
+// Restore original Sequelize initialization using env vars directly
 const sequelize = new Sequelize(
   dbName,
   dbUser,
@@ -29,19 +29,21 @@ const sequelize = new Sequelize(
     port: dbPort,
     dialect: 'postgres',
     dialectOptions: {
-      ssl: env === 'production'
+      // ssl: process.env.NODE_ENV === 'production' ? { require: true, rejectUnauthorized: false } : false // Example SSL config if needed
     },
-    logging: env === 'development' ? console.log : false
+    logging: process.env.NODE_ENV === 'development' ? console.log : false // Keep logging for dev
   }
 );
 
 // Load all model files in this directory
-fs.readdirSync(__dirname)
+fs
+  .readdirSync(__dirname)
   .filter(file => {
     return (
       file.indexOf('.') !== 0 &&
       file !== basename &&
-      file.slice(-3) === '.js'
+      file.slice(-3) === '.js' &&
+      file.indexOf('.test.js') === -1
     );
   })
   .forEach(file => {

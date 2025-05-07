@@ -38,23 +38,41 @@ exports.getAllErratics = async (req, res) => {
     const erratics = await db.Erratic.findAll({
       where: whereConditions,
       attributes: [
-        'id', 
-        'name', 
-        'rock_type', 
-        'size_meters',
-        'estimated_age',
-        'elevation',
-        'description',
-        'cultural_significance',
-        'image_url',
-        [db.sequelize.fn('ST_AsGeoJSON', db.sequelize.col('location')), 'location']
+        'id', 'name', 'rock_type', 'size_meters', 'elevation', 'image_url',
+        'estimated_age', 'description', 'cultural_significance',
+        [db.sequelize.fn('ST_AsGeoJSON', db.sequelize.col('Erratic.location')), 'location']
+      ],
+      include: [
+        {
+          model: db.ErraticAnalysis,
+          as: 'analysis',
+          attributes: { 
+            exclude: ['erraticId', 'createdAt', 'updatedAt'] 
+          }
+        }
       ]
     });
     
-    // Parse the GeoJSON string returned by PostGIS
-    const formattedErratics = erratics.map(erratic => {
-      const plainErratic = erratic.get({ plain: true });
-      plainErratic.location = JSON.parse(plainErratic.location);
+    const formattedErratics = erratics.map(erraticInstance => {
+      const plainErratic = erraticInstance.get({ plain: true });
+      
+      if (plainErratic.analysis) {
+        for (const key in plainErratic.analysis) {
+          plainErratic[key] = plainErratic.analysis[key];
+        }
+        delete plainErratic.analysis;
+      }
+      
+      if (plainErratic.location) {
+        try {
+          plainErratic.location = JSON.parse(plainErratic.location);
+        } catch (parseError) {
+          console.error(`Failed to parse location for erratic ${plainErratic.id}:`, parseError);
+          plainErratic.location = null; 
+        }
+      } else {
+        plainErratic.location = null; 
+      }
       return plainErratic;
     });
     
@@ -72,7 +90,7 @@ exports.getErraticById = async (req, res) => {
     
     const erratic = await db.Erratic.findByPk(id, {
       attributes: {
-        include: [[db.sequelize.fn('ST_AsGeoJSON', db.sequelize.col('location')), 'location']]
+        include: [[db.sequelize.fn('ST_AsGeoJSON', db.sequelize.col('Erratic.location')), 'location']]
       },
       include: [
         {
@@ -84,6 +102,13 @@ exports.getErraticById = async (req, res) => {
           model: db.ErraticReference,
           as: 'references',
           attributes: ['id', 'reference_type', 'title', 'authors', 'publication', 'year', 'url']
+        },
+        {
+          model: db.ErraticAnalysis,
+          as: 'analysis',
+          attributes: { 
+            exclude: ['erraticId', 'createdAt', 'updatedAt'] 
+          }
         }
       ]
     });
@@ -92,9 +117,24 @@ exports.getErraticById = async (req, res) => {
       return res.status(404).json({ message: 'Erratic not found' });
     }
     
-    // Parse the GeoJSON location
     const formattedErratic = erratic.get({ plain: true });
-    formattedErratic.location = JSON.parse(formattedErratic.location);
+    if (formattedErratic.analysis) {
+      for (const key in formattedErratic.analysis) {
+        formattedErratic[key] = formattedErratic.analysis[key];
+      }
+      delete formattedErratic.analysis;
+    }
+
+    if (formattedErratic.location) {
+       try {
+          formattedErratic.location = JSON.parse(formattedErratic.location);
+        } catch (parseError) {
+          console.error(`Failed to parse location for erratic ${formattedErratic.id}:`, parseError);
+          formattedErratic.location = null; 
+        }
+    } else {
+      formattedErratic.location = null;
+    }
     
     res.json(formattedErratic);
   } catch (error) {
@@ -146,7 +186,16 @@ exports.getNearbyErratics = async (req, res) => {
     
     const formattedErratics = erratics.map(erratic => {
       const plainErratic = erratic.get({ plain: true });
-      plainErratic.location = JSON.parse(plainErratic.location);
+      if (plainErratic.location) {
+        try {
+          plainErratic.location = JSON.parse(plainErratic.location);
+        } catch (parseError) {
+          console.error(`Failed to parse location for erratic ${plainErratic.id}:`, parseError);
+          plainErratic.location = null;
+        }
+      } else {
+        plainErratic.location = null;
+      }
       plainErratic.distance = parseFloat(plainErratic.distance) / 1000; // Convert to kilometers
       return plainErratic;
     });
@@ -218,27 +267,45 @@ exports.updateErratic = async (req, res) => {
       return res.status(404).json({ message: 'Erratic not found' });
     }
     
-    // Prepare update data
-    const updateData = {};
+    // Separate core fields from analysis fields in req.body
+    const coreFields = ['name', 'latitude', 'longitude', 'elevation', 'size_meters', 'rock_type', 'estimated_age', 'discovery_date', 'description', 'cultural_significance', 'historical_notes', 'image_url'];
+    const analysisFields = ['usage_type', 'cultural_significance_score', 'has_inscriptions', 'accessibility_score', 'size_category', 'nearest_water_body_dist', 'nearest_settlement_dist', 'elevation_category', 'geological_type', 'estimated_displacement_dist', 'vector_embedding', 'vector_embedding_data'];
     
-    if (name) updateData.name = name;
-    if (latitude && longitude) {
-      updateData.location = db.sequelize.literal(
-        `ST_SetSRID(ST_MakePoint(${parseFloat(longitude)}, ${parseFloat(latitude)}), 4326)`
+    const coreUpdateData = {};
+    const analysisUpdateData = {};
+
+    for (const key in req.body) {
+      if (coreFields.includes(key)) {
+        // Special handling for location
+        if (key === 'latitude' || key === 'longitude') continue; // Handled below
+        coreUpdateData[key] = req.body[key];
+      } else if (analysisFields.includes(key)) {
+        analysisUpdateData[key] = req.body[key];
+      }
+    }
+
+    // Handle location update separately
+    if (req.body.latitude && req.body.longitude) {
+      coreUpdateData.location = db.sequelize.literal(
+        `ST_SetSRID(ST_MakePoint(${parseFloat(req.body.longitude)}, ${parseFloat(req.body.latitude)}), 4326)`
       );
     }
-    if (elevation !== undefined) updateData.elevation = elevation ? parseFloat(elevation) : null;
-    if (size_meters !== undefined) updateData.size_meters = size_meters ? parseFloat(size_meters) : null;
-    if (rock_type !== undefined) updateData.rock_type = rock_type;
-    if (estimated_age !== undefined) updateData.estimated_age = estimated_age;
-    if (discovery_date !== undefined) updateData.discovery_date = discovery_date ? new Date(discovery_date) : null;
-    if (description !== undefined) updateData.description = description;
-    if (cultural_significance !== undefined) updateData.cultural_significance = cultural_significance;
-    if (historical_notes !== undefined) updateData.historical_notes = historical_notes;
-    if (image_url !== undefined) updateData.image_url = image_url;
     
-    // Update the erratic
-    await erratic.update(updateData);
+    // Update the core erratic
+    if (Object.keys(coreUpdateData).length > 0) {
+      await db.Erratic.update(coreUpdateData, { where: { id: id } });
+    }
+
+    // Update or create the associated analysis record
+    if (Object.keys(analysisUpdateData).length > 0) {
+      const [analysisRecord, created] = await db.ErraticAnalysis.findOrCreate({
+        where: { erraticId: id },
+        defaults: analysisUpdateData
+      });
+      if (!created) {
+        await analysisRecord.update(analysisUpdateData);
+      }
+    }
     
     res.json({ message: 'Erratic updated successfully' });
   } catch (error) {

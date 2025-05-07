@@ -1,0 +1,142 @@
+.filterItem {
+  background-color: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.filterItem.active {
+  border-left: 4px solid #28a745;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.filterItem.inactive {
+  border-left: 4px solid #6c757d;
+  opacity: 0.8;
+}
+
+.filterItemError {
+  color: #dc3545;
+  padding: 10px;
+  border: 1px solid #dc3545;
+  border-radius: 4px;
+  background-color: #f8d7da;
+}
+
+.filterHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.filterName {
+  font-weight: bold;
+  color: #343a40;
+  font-size: 1.05em;
+}
+
+.filterType {
+  font-size: 0.8em;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.filterSummary {
+  font-size: 0.85em;
+  color: #495057;
+  margin-top: 0;
+  margin-bottom: 10px;
+  padding-left: 5px;
+  border-left: 2px solid #e9ecef;
+}
+
+.filterControls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 8px; /* Gap between controls */
+}
+
+.controlButton {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.editButton {
+  background-color: #ffc107;
+  border-color: #ffc107;
+  color: #212529;
+}
+
+.editButton:hover {
+  background-color: #e0a800;
+  border-color: #d39e00;
+}
+
+.deleteButton {
+  background-color: #dc3545;
+  border-color: #dc3545;
+  color: white;
+}
+
+.deleteButton:hover {
+  background-color: #c82333;
+  border-color: #bd2130;
+}
+
+/* Basic Toggle Switch Styles */
+.toggleSwitchContainer {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  position: relative; /* Needed for absolute positioning of slider parts */
+}
+
+.toggleInput {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggleSlider {
+  width: 34px;
+  height: 18px;
+  background-color: #ccc;
+  border-radius: 18px;
+  position: relative;
+  transition: background-color 0.2s;
+  margin-right: 8px; /* Space between slider and label text */
+}
+
+.toggleSlider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.toggleInput:checked + .toggleSlider {
+  background-color: #28a745; /* Active color */
+}
+
+.toggleInput:checked + .toggleSlider::before {
+  transform: translateX(16px);
+}
+
+.toggleLabel {
+  font-size: 0.85em;
+  color: #495057;
+} 

@@ -17,4 +17,18 @@ router.get('/proximity/:id', analysisController.getProximityAnalysis);
  */
 router.post('/proximity/batch', authenticateToken, requireAdmin, analysisController.batchProximityAnalysis);
 
+/**
+ * @route GET /api/analysis/classify/:id
+ * @description Classify an erratic based on its description and attributes
+ * @access Public
+ */
+router.get('/classify/:id', analysisController.classifyErratic);
+
+/**
+ * @route POST /api/analysis/classify/batch
+ * @description Run batch classification on multiple erratics
+ * @access Admin only
+ */
+router.post('/classify/batch', authenticateToken, requireAdmin, analysisController.batchClassifyErratics);
+
 module.exports = router; 

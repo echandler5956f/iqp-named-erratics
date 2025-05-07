@@ -1,10 +1,30 @@
-scikit-learn>=1.0.2
-geopandas>=0.10.2
+# Core ML/NLP packages
+scikit-learn>=1.0.0
+sentence-transformers>=2.2.0
+joblib>=1.1.0
+bertopic>=0.15.0
+hdbscan>=0.8.29
+umap-learn>=0.5.3
+nltk>=3.7.0
 spacy>=3.4.0
-pandas>=1.5.0
+kneed>=0.8.0  # For finding knee points in curves
+
+# Data processing and analysis
 numpy>=1.20.0
+pandas>=1.4.0
+plotly>=5.7.0 # Needed for bertopic
+
+# Database connectivity
+psycopg2-binary>=2.9.3
+SQLAlchemy>=1.4.0
+
+# Geographic and spatial processing
+geopandas>=0.10.0
 shapely>=1.8.0
+pyproj>=3.3.0
 rtree>=1.0.0
-matplotlib>=3.5.0
-tensorflow>=2.9.0
-psycopg2-binary>=2.9.3 
+
+# After pip installing these packages, run: 
+# python -m spacy download en_core_web_md
+# python -m spacy download en_core_web_lg
+# python -m nltk.downloader stopwords wordnet punkt averaged_perceptron_tagger 

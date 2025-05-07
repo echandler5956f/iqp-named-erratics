@@ -1,0 +1,61 @@
+.homePage {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden; /* Prevent scrollbars on the main page if header/map manage their own */
+}
+
+.mainContent {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden; /* Important for child elements to scroll independently if needed */
+}
+
+.filterPanelContainer {
+  width: 350px; /* Adjust width as needed */
+  padding: 15px;
+  background-color: #f4f6f8; /* Light background for the panel area */
+  overflow-y: auto; /* Allow scrolling within the filter panel if content exceeds height */
+  border-right: 1px solid #d1d5db; /* Separator line */
+  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+  z-index: 10; /* Ensure it sits above the map if there are overlaps conceptually */
+}
+
+.mapContainer {
+  flex-grow: 1;
+  position: relative; /* For positioning loading/error messages */
+  background-color: #e9ecef; /* Placeholder background while map loads */
+}
+
+/* Styling for loading/error/no-results messages within mapContainer */
+.loadingText,
+.errorText,
+.noResultsText {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 20px;
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  text-align: center;
+  font-size: 1.1em;
+}
+
+.errorText {
+  color: #D8000C; /* Error red */
+  background-color: #FFD2D2; /* Light red background */
+  border: 1px solid #D8000C;
+}
+
+.noResultsText {
+  color: #555;
+}
+
+/* Ensure ErraticsMap component takes full space of its container */
+/* This might need to be applied to the root div inside ErraticsMap.jsx */
+.mapContainer > div { /* Assuming ErraticsMap renders a div as its root */
+  width: 100%;
+  height: 100%;
+} 

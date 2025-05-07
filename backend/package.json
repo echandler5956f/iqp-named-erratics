@@ -9,7 +9,11 @@
     "db:init": "node src/scripts/initDb.js",
     "db:import": "node src/scripts/importData.js",
     "db:migrate": "node src/scripts/runMigrations.js",
-    "py:setup": "cd src/scripts/python && python setup_env.py"
+    "py:setup": "cd src/scripts/python && python setup_env.py",
+    "py:install": "node src/scripts/install_python_deps.js",
+    "spatial:install": "npm run db:migrate && npm run py:install",
+    "spatial:analyze": "echo 'Running spatial analysis on all erratics' && node src/scripts/runSpatialAnalysis.js",
+    "pgvector:install": "node src/scripts/install_pgvector_source.js"
   },
   "keywords": [],
   "author": "",

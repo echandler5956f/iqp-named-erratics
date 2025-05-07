@@ -2,23 +2,27 @@
 
 ## Project Overview
 
-This documentation provides a comprehensive overview of the Glacial Erratics Map application, a full-stack web application that displays a dynamic, interactive map of named glacial erratics (rocks transported and deposited by glaciers). The application allows users to explore these geological features with detailed information through an intuitive map interface.
+This documentation provides a comprehensive overview of the Glacial Erratics Map application, a full-stack web application that displays a dynamic, interactive map of named glacial erratics located in North America (USA and Canada). The application allows users to explore these geological features, view detailed information, and leverages backend spatial analysis capabilities.
 
 ### Key Features
 
-- Interactive map with multiple toggleable layers (satellite, terrain, standard)
-- Markers for glacial erratics with detailed pop-up information
-- User location tracking for finding nearby erratics
-- Admin interface for managing erratic data
-- Detailed information display for each erratic
+- Interactive map (React-Leaflet) with multiple toggleable base layers (OpenStreetMap, Satellite, Terrain).
+- Markers for named glacial erratics with detailed pop-up and sidebar information.
+- User location tracking for finding nearby erratics.
+- PostgreSQL/PostGIS backend storing comprehensive data, including spatial analysis fields.
+- Integration with Python scripts for spatial analysis (proximity, classification) via Node.js backend.
+- RESTful API for data retrieval and analysis tasks.
+- Admin interface for managing erratic data (CRUD operations).
+- JWT-based authentication for admin access.
 
 ## Architecture Overview
 
 The application follows a standard client-server architecture:
 
-- **Frontend**: React-based single-page application using Leaflet.js for mapping
-- **Backend**: Node.js/Express API server with PostgreSQL/PostGIS database
-- **Authentication**: JWT-based authentication for admin access
+- **Frontend**: React-based single-page application using React-Leaflet for mapping.
+- **Backend**: Node.js/Express API server with PostgreSQL/PostGIS database.
+- **Spatial Analysis**: Python scripts executed by the Node.js backend for computationally intensive tasks.
+- **Authentication**: JWT-based authentication for admin access.
 
 ## Directory Structure
 
@@ -26,42 +30,42 @@ The application follows a standard client-server architecture:
 /
 ├── frontend/                  # React frontend application
 │   ├── src/
-│   │   ├── components/        # Reusable UI components
-│   │   │   ├── Auth/          # Authentication-related components
-│   │   │   ├── Layout/        # Layout components (header, footer, etc.)
-│   │   │   └── Map/           # Map-related components
-│   │   ├── pages/             # Page components
-│   │   ├── contexts/          # React context providers
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── services/          # API service functions
+│   │   ├── components/        # Reusable UI components (e.g., Map, Auth, Layout)
+│   │   │   ├── Map/           # Primary map component (ErraticsMap.jsx)
+│   │   │   └── ...            # Other UI components
+│   │   ├── pages/             # Page components (HomePage, AdminPage, etc.)
+│   │   ├── contexts/          # React context providers (if any)
+│   │   ├── hooks/             # Custom React hooks (currently unused)
+│   │   ├── services/          # API service functions (currently unused, logic in components)
 │   │   ├── utils/             # Utility functions
-│   │   ├── assets/            # Static assets
+│   │   ├── assets/            # Static assets (icons, images)
 │   │   ├── App.jsx            # Main application component
 │   │   └── main.jsx           # Application entry point
-│   └── public/                # Static files
+│   └── public/                # Static files (e.g., custom erratic icon)
 ├── backend/                   # Express backend API server
 │   ├── src/
-│   │   ├── controllers/       # Request handlers
-│   │   ├── models/            # Database models
-│   │   ├── routes/            # API route definitions
-│   │   ├── services/          # Business logic services
-│   │   ├── utils/             # Utility functions
-│   │   ├── data/              # Data files and imports
-│   │   ├── scripts/           # Helper scripts
+│   │   ├── controllers/       # Request handlers (erraticController, authController, analysisController)
+│   │   ├── models/            # Database models (Sequelize definitions - Erratic, User, etc.)
+│   │   ├── routes/            # API route definitions (erraticRoutes, authRoutes, analysisRoutes)
+│   │   ├── services/          # Business logic services (e.g., pythonService)
+│   │   ├── utils/             # Utility functions (e.g., auth middleware)
+│   │   ├── data/              # Data files and import scripts (if any)
+│   │   ├── scripts/           # Python analysis scripts called by backend
 │   │   └── index.js           # Server entry point
 │   └── .env                   # Environment configuration
 ```
 
 ## Database Schema
 
-The application uses PostgreSQL with PostGIS extension for spatial data with the following primary models:
+The application uses PostgreSQL with the PostGIS extension, managed via Sequelize. Key models include:
 
 ### Erratic
 
-Represents a glacial erratic with its location and attributes:
+Represents a glacial erratic with its location and comprehensive attributes:
 
 ```javascript
 {
+  // Core fields
   id: Integer (PK),
   name: String,
   location: Point (PostGIS geometry),
@@ -73,7 +77,20 @@ Represents a glacial erratic with its location and attributes:
   description: Text,
   cultural_significance: Text,
   historical_notes: Text,
-  image_url: String
+  image_url: String,
+  
+  // Spatial Analysis / ML Fields (from SpatialAnalysisMetaPrompt.md)
+  usage_type: Array<String>,
+  cultural_significance_score: Integer,
+  has_inscriptions: Boolean,
+  accessibility_score: Integer,
+  size_category: String,
+  nearest_water_body_dist: Float,
+  nearest_settlement_dist: Float,
+  elevation_category: String,
+  geological_type: String,
+  estimated_displacement_dist: Float,
+  vector_embedding_data: JSONB // Placeholder for vector embeddings
 }
 ```
 
@@ -84,7 +101,7 @@ Stores media files (images, videos, documents) related to erratics:
 ```javascript
 {
   id: Integer (PK),
-  erraticId: Integer (FK),
+  erraticId: Integer (FK -> Erratics.id),
   media_type: Enum('image', 'video', 'document', 'other'),
   url: String,
   title: String,
@@ -101,7 +118,7 @@ Stores scholarly references related to erratics:
 ```javascript
 {
   id: Integer (PK),
-  erraticId: Integer (FK),
+  erraticId: Integer (FK -> Erratics.id),
   reference_type: Enum('article', 'book', 'paper', 'website', 'other'),
   title: String,
   authors: String,
@@ -130,94 +147,98 @@ Admin user accounts for managing the application:
 
 ## Backend API
 
-The backend provides a RESTful API with the following endpoints:
+The backend provides a RESTful API with the following key endpoints:
 
 ### Erratic Endpoints
 
-- `GET /api/erratics`: Get all erratics
-- `GET /api/erratics/:id`: Get a specific erratic by ID
-- `GET /api/erratics/nearby`: Get erratics near a specific location
-- `POST /api/erratics`: Create a new erratic (admin only)
-- `PUT /api/erratics/:id`: Update an existing erratic (admin only)
-- `DELETE /api/erratics/:id`: Delete an erratic (admin only)
+- `GET /api/erratics`: Get all erratics (with basic fields).
+- `GET /api/erratics/:id`: Get a specific erratic by ID (includes associations like media/references).
+- `GET /api/erratics/nearby`: Get erratics near a specific location (`lat`, `lng`, `radius`).
+- `POST /api/erratics`: Create a new erratic (Admin only).
+- `PUT /api/erratics/:id`: Update an existing erratic (Admin only).
+- `DELETE /api/erratics/:id`: Delete an erratic (Admin only).
+
+### Analysis Endpoints
+
+- `GET /api/analysis/proximity/:id`: Get proximity analysis results for a single erratic. Executes Python script. Query param `?update=true` can trigger DB update. (Public)
+- `POST /api/analysis/proximity/batch`: Run batch proximity analysis for multiple erratic IDs. Executes Python script. (Admin only)
+- `GET /api/analysis/classify/:id`: Classify a single erratic based on its data. Executes Python script. Query param `?update=true` can trigger DB update. (Public)
+- `POST /api/analysis/classify/batch`: Run batch classification for multiple erratic IDs. Executes Python script. (Admin only)
 
 ### Authentication Endpoints
 
-- `POST /api/auth/login`: Admin login
-- `GET /api/auth/profile`: Get admin profile information
+- `POST /api/auth/login`: Admin login, returns JWT token.
+- `GET /api/auth/profile`: Get authenticated admin's profile information.
 
 ## Frontend Components
 
 ### Core Components
 
-#### ErraticsMap
+#### ErraticsMap (`frontend/src/components/Map/ErraticsMap.jsx`)
 
-The main map component that displays the interactive map with erratics:
+The central component responsible for the map interface:
 
-- Renders a Leaflet map with multiple base layers
-- Fetches and displays erratic markers
-- Handles user location tracking
-- Displays detailed information in popups and sidebar
+- Uses `React-Leaflet` to render the map container, tile layers, markers, and popups.
+- Implements `LayersControl` for switching base maps (OpenStreetMap, Satellite, Terrain).
+- Fetches erratic data using `axios` directly within the component's `useEffect` hook.
+- Displays erratic markers with custom icons (`erratic-icon.png`).
+- Shows basic info in marker popups and detailed info in a sidebar when a marker is clicked.
+- Includes a `LocationMarker` component to track user's location and find nearby erratics.
+- Handles loading and error states for data fetching.
 
-#### Authentication Components
+#### Authentication Components (`frontend/src/components/Auth/`)
 
-Handles user authentication and admin access:
+Likely contains components for the login process (e.g., `LoginForm.jsx`).
 
-- Login form
-- Protected routes
-- JWT token storage and management
+#### Admin Components (`frontend/src/pages/AdminPage.jsx`)
 
-#### Admin Interface
+Provides the UI for admin users to perform CRUD operations on erratic data, likely including forms and data tables.
 
-Provides CRUD operations for managing erratics:
+### State Management
 
-- Form for adding/editing erratics
-- Data table view of all erratics
-- Media management
+- Primarily uses React's built-in state management (`useState`, `useEffect`).
+- No dedicated state management library (like Redux or Zustand) or extensive use of Context API observed in `ErraticsMap.jsx`.
 
 ## Implementation Details
 
 ### Map Implementation
 
-The map is implemented using Leaflet.js through the React-Leaflet wrapper:
+- Leverages `React-Leaflet` heavily.
+- Base layers provided: OpenStreetMap, Esri World Imagery (Satellite), Stamen Terrain.
+- Custom erratic marker icon loaded from `public/erratic-icon.png`.
+- Popups provide quick info; a sidebar (`erratic-sidebar`) displays full details for the selected erratic.
+- User location is obtained using the Leaflet's `map.locate()` method.
 
-- Multiple base layers: OpenStreetMap, Satellite, Terrain
-- Custom markers for erratics
-- Popups with basic information
-- Sidebar with detailed information
-- Location tracking for finding nearby erratics
+### Backend-Python Interaction
+
+- The Node.js backend uses a service (`backend/src/services/pythonService.js`, not fully inspected but inferred) to execute Python scripts located in `backend/src/scripts/`.
+- Data is likely passed as command-line arguments, and results are returned via stdout (parsed as JSON).
+- Analysis endpoints (`/api/analysis/...`) trigger these Python scripts.
+- Batch processing endpoints exist for running analysis on multiple erratics, likely processed sequentially in the background on the server.
 
 ### Authentication Flow
 
-JWT-based authentication:
-
-1. User submits credentials
-2. Server validates credentials and issues a JWT token
-3. Token is stored in browser (localStorage)
-4. Token is included in subsequent API requests
-5. Protected routes are secured with middleware
+- Standard JWT flow: login endpoint validates credentials, issues token.
+- Token stored client-side (likely localStorage or sessionStorage).
+- Token sent in `Authorization` header for protected API routes.
+- Backend uses middleware (`backend/src/utils/auth.js`) to verify tokens and check admin privileges.
 
 ### Data Flow
 
-1. Frontend fetches erratic data from backend API
-2. Data is rendered on the map as markers
-3. User interactions (clicks, search) filter or focus on specific erratics
-4. Admin actions update data in the database
+1. Frontend (`ErraticsMap.jsx`) fetches initial erratic data from `/api/erratics`.
+2. Data is stored in component state and rendered as markers.
+3. User interaction (clicking marker) updates state to show details in the sidebar.
+4. User location tracking triggers fetch to `/api/erratics/nearby`.
+5. Admin actions (via `AdminPage.jsx`) call protected API endpoints to modify data.
+6. Analysis requests (potentially triggered by user action or admin batch jobs) call `/api/analysis/...` endpoints, which execute Python scripts and potentially update the database.
 
-## Future Enhancements
+## Future Enhancements (Based on `SpatialAnalysisMetaPrompt.md`)
 
-Based on the Spatial-Analysis.md document, the project is planned to be enhanced with:
+The project aims to incorporate more advanced features, building upon the current structure:
 
-1. Advanced spatial analysis features
-2. Machine learning for erratic classification
-3. Qualitative categorization system
-4. Interactive analysis tools
-5. Advanced UI/UX for analysis features
-
-These enhancements will include:
-
-- Extended data schema with additional attributes
-- NLP-based classification of erratics
-- Proximity and terrain analysis
-- Clustering algorithms
-- Custom query builder for complex searches 
+1.  **Sophisticated Spatial Analysis**: Implement clustering (HDBSCAN, K-Means), terrain analysis (viewshed, prominence), and distribution pattern analysis (Ripley's K) using Python and PostGIS.
+2.  **Machine Learning Classification**: Train models (e.g., using scikit-learn, spacy) to automatically classify erratics based on descriptions (`usage_type`, `cultural_significance_score`) and other features.
+3.  **Feature Engineering**: Develop robust feature extraction from text descriptions and spatial relationships.
+4.  **Interactive Analysis Tools**: Build UI components allowing users to perform custom queries, comparisons, and potentially run analysis on-the-fly.
+5.  **Enhanced Visualizations**: Use analysis results to drive map visualizations (e.g., color-coding by cluster/category, showing analysis layers).
+6.  **Vector Embeddings**: Fully utilize vector embeddings (potentially using `pgvector`) for semantic search and ML features, moving beyond the current JSONB placeholder. 

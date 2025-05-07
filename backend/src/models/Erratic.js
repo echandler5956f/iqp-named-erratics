@@ -48,46 +48,6 @@ module.exports = (sequelize, DataTypes) => {
     image_url: {
       type: DataTypes.STRING,
       allowNull: true
-    },
-    usage_type: {
-      type: DataTypes.ARRAY(DataTypes.STRING(100)),
-      allowNull: true
-    },
-    cultural_significance_score: {
-      type: DataTypes.INTEGER,
-      allowNull: true
-    },
-    has_inscriptions: {
-      type: DataTypes.BOOLEAN,
-      allowNull: true
-    },
-    accessibility_score: {
-      type: DataTypes.INTEGER,
-      allowNull: true
-    },
-    size_category: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    nearest_water_body_dist: {
-      type: DataTypes.FLOAT,
-      allowNull: true
-    },
-    nearest_settlement_dist: {
-      type: DataTypes.FLOAT,
-      allowNull: true
-    },
-    elevation_category: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    geological_type: {
-      type: DataTypes.STRING(100),
-      allowNull: true
-    },
-    estimated_displacement_dist: {
-      type: DataTypes.FLOAT,
-      allowNull: true
     }
   }, {
     timestamps: true
@@ -102,6 +62,11 @@ module.exports = (sequelize, DataTypes) => {
     Erratic.hasMany(models.ErraticReference, {
       foreignKey: 'erraticId',
       as: 'references'
+    });
+
+    Erratic.hasOne(models.ErraticAnalysis, {
+      foreignKey: 'erraticId',
+      as: 'analysis'
     });
   };
   

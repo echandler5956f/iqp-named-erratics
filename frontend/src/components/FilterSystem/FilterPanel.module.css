@@ -1,0 +1,91 @@
+.filterPanel {
+  background-color: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+  min-width: 300px;
+  max-width: 400px; /* Or adjust as needed */
+}
+
+.filterPanel h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #333;
+  font-size: 1.2em;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.addButton {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s ease;
+  display: block;
+  width: 100%;
+  margin-bottom: 15px;
+}
+
+.addButton:hover {
+  background-color: #0056b3;
+}
+
+.filterList {
+  margin-top: 15px;
+  max-height: 400px; /* Adjust as needed */
+  overflow-y: auto;
+}
+
+.noFiltersText {
+  color: #6c757d;
+  font-style: italic;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* Styles for filter config rows within the modal, passed via FilterPanel */
+.filterConfigRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.filterConfigRow label {
+  margin-right: 5px;
+  font-size: 0.9em;
+  color: #495057;
+  flex-shrink: 0; /* Prevent label from shrinking */
+}
+
+.filterConfigRow input[type="number"],
+.filterConfigRow input[type="text"],
+.filterConfigRow select { /* Added select for dropdowns */
+  padding: 8px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9em;
+  flex-grow: 1; /* Allow input/select to fill remaining space */
+  min-width: 80px; /* Optional: prevent it getting too small */
+  box-sizing: border-box;
+}
+
+.filterConfigRow input::placeholder {
+  color: #adb5bd;
+}
+
+/* 
+Optional: Specific adjustments if min/max inputs need different sizing 
+Example: target the specific div structure for size filter if needed 
+
+.filterConfigRow > input[id^='min'], 
+.filterConfigRow > input[id^='max'] {
+  flex-grow: 0;
+  width: 100px; // Restore fixed width only for these
+} 
+*/ 

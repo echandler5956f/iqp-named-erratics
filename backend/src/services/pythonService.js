@@ -120,6 +120,24 @@ class PythonService {
     // Run the script
     return this.runScript('proximity_analysis.py', args);
   }
+  
+  /**
+   * Run classification for an erratic
+   * @param {number} erraticId - ID of the erratic to classify
+   * @param {boolean} updateDb - Whether to update the database with results
+   * @returns {Promise<object>} - Classification results
+   */
+  async runClassification(erraticId, updateDb = false) {
+    // Build arguments
+    const args = [erraticId.toString()];
+    
+    if (updateDb) {
+      args.push('--update-db');
+    }
+    
+    // Run the script
+    return this.runScript('classify_erratic.py', args);
+  }
 }
 
 module.exports = new PythonService(); 
