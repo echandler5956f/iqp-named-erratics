@@ -232,6 +232,25 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
               {selectedErratic.description && <div className="detail-section"><h3>Description</h3><p>{selectedErratic.description}</p></div>}
               {selectedErratic.cultural_significance && <div className="detail-section"><h3>Cultural Significance</h3><p>{selectedErratic.cultural_significance}</p></div>}
               {selectedErratic.historical_notes && <div className="detail-section"><h3>Historical Notes</h3><p>{selectedErratic.historical_notes}</p></div>}
+              
+              { /* --- Analysis Fields --- */ }
+              { typeof selectedErratic.accessibility_score === 'number' && (
+                <div className="detail-section"><h3>Accessibility Score</h3><p>{selectedErratic.accessibility_score} / 5</p></div>
+              )}
+              { selectedErratic.terrain_landform && (
+                <div className="detail-section"><h3>Terrain Landform</h3><p>{selectedErratic.terrain_landform}</p></div>
+              )}
+              { typeof selectedErratic.nearest_colonial_road_dist === 'number' && (
+                <div className="detail-section"><h3>Proximity to Colonial Road</h3><p>{selectedErratic.nearest_colonial_road_dist.toFixed(0)} meters</p></div>
+              )}
+              { selectedErratic.usage_type && Array.isArray(selectedErratic.usage_type) && selectedErratic.usage_type.length > 0 && (
+                <div className="detail-section"><h3>Usage Types</h3><p>{selectedErratic.usage_type.join(', ')}</p></div>
+              )}
+              { typeof selectedErratic.has_inscriptions === 'boolean' && (
+                <div className="detail-section"><h3>Has Inscriptions</h3><p>{selectedErratic.has_inscriptions ? 'Yes' : 'No'}</p></div>
+              )}
+              { /* --- End Analysis Fields --- */ }
+
               {selectedErratic.location && selectedErratic.location.coordinates && (
                 <div className="coordinates">
                   <p><strong>Coordinates:</strong> {selectedErratic.location.coordinates[1].toFixed(4)}, {selectedErratic.location.coordinates[0].toFixed(4)}</p>

@@ -70,15 +70,21 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.FLOAT,
       allowNull: true
     },
-    vector_embedding: {
-      type: DataTypes.JSONB, // Or VECTOR type if pgvector is properly installed & configured
+    ruggedness_tri: {
+      type: DataTypes.FLOAT,
       allowNull: true
     },
-    // Consider removing vector_embedding_data if vector_embedding holds the actual data
-    vector_embedding_data: {
-      type: DataTypes.JSONB,
-      allowNull: true,
-      comment: 'Placeholder or raw data for embeddings'
+    terrain_landform: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    terrain_slope_position: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    vector_embedding: {
+      type: 'VECTOR(384)', // Raw type for pgvector after migration
+      allowNull: true
     }
     // Note: createdAt and updatedAt are added by default with timestamps: true
   }, {

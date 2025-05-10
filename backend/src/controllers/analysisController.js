@@ -9,7 +9,15 @@ class AnalysisController {
    * Constructor to bind methods
    */
   constructor() {
-    // Bind methods to the instance
+    // Bind public methods used as route handlers
+    this.getProximityAnalysis = this.getProximityAnalysis.bind(this);
+    this.batchProximityAnalysis = this.batchProximityAnalysis.bind(this);
+    this.classifyErratic = this.classifyErratic.bind(this);
+    this.batchClassifyErratics = this.batchClassifyErratics.bind(this);
+    this.getClusterAnalysis = this.getClusterAnalysis.bind(this);
+    this.triggerBuildTopicModels = this.triggerBuildTopicModels.bind(this);
+
+    // Bind private helper methods (if their `this` context might be lost, though less likely if called via this.*)
     this._processBatchAnalysis = this._processBatchAnalysis.bind(this);
     this._processBatchClassification = this._processBatchClassification.bind(this);
   }
@@ -20,10 +28,12 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async getProximityAnalysis(req, res) {
+    console.log(`[AnalysisController] getProximityAnalysis called for ID: ${req.params.id}`);
     try {
       const erraticId = parseInt(req.params.id);
       
       if (isNaN(erraticId)) {
+        console.error('[AnalysisController] Invalid erratic ID:', req.params.id);
         return res.status(400).json({ error: 'Invalid erratic ID' });
       }
       
@@ -33,8 +43,9 @@ class AnalysisController {
       // Determine if we should update the database
       const updateDb = req.query.update === 'true';
       
-      // Run the analysis
+      console.log(`[AnalysisController] Calling pythonService.runProximityAnalysis for ID: ${erraticId} with features: ${featureLayers.join(',')} and updateDb: ${updateDb}`);
       const results = await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
+      console.log(`[AnalysisController] pythonService.runProximityAnalysis returned for ID: ${erraticId}. Results:`, JSON.stringify(results));
       
       // Check for error in results
       if (results.error) {
@@ -196,6 +207,91 @@ class AnalysisController {
     
     console.log(`Batch classification completed. Successful: ${results.successful.length}, Failed: ${results.failed.length}`);
     return results;
+  }
+
+  /**
+   * Perform spatial clustering on erratics
+   * @param {object} req - Express request object
+   * @param {object} res - Express response object
+   */
+  async getClusterAnalysis(req, res) {
+    try {
+      const { 
+        algorithm = 'dbscan', // Default algorithm
+        features, 
+        algoParams, 
+        outputToFile = 'true', 
+        outputFilename = 'clustering_results.json' 
+      } = req.query;
+
+      const featuresToCluster = features ? features.split(',') : [];
+      let parsedAlgoParams = {};
+      if (algoParams) {
+        try {
+          parsedAlgoParams = JSON.parse(algoParams);
+        } catch (e) {
+          return res.status(400).json({ error: 'Invalid algoParams JSON string' });
+        }
+      }
+      const doOutputToFile = outputToFile === 'true';
+
+      // Respond quickly
+      res.json({ 
+        message: 'Clustering analysis job started', 
+        details: { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename }
+      });
+
+      // Run clustering in the background
+      pythonService.runClusteringAnalysis(algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename)
+        .then(results => {
+          if (results.error) {
+            console.error('Error in clustering analysis:', results.error, results.details || '');
+          } else {
+            console.log('Clustering analysis completed successfully:', results);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to execute clustering analysis script:', error);
+        });
+
+    } catch (error) {
+      console.error('Error starting clustering analysis:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * Trigger the building of NLP topic models
+   * @param {object} req - Express request object
+   * @param {object} res - Express response object
+   */
+  async triggerBuildTopicModels(req, res) {
+    try {
+      const { outputPath = 'build_topics_result.json' } = req.body;
+
+      // Respond quickly
+      res.status(202).json({ 
+        message: 'Topic model building process started', 
+        details: { outputPath }
+      });
+
+      // Run model building in the background
+      pythonService.runBuildTopicModels(outputPath)
+        .then(results => {
+          if (results.error) {
+            console.error('Error in topic model building:', results.error, results.details || '');
+          } else {
+            console.log('Topic model building completed successfully:', results);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to execute topic model building script:', error);
+        });
+
+    } catch (error) {
+      console.error('Error starting topic model building:', error);
+      res.status(500).json({ error: error.message });
+    }
   }
 }
 

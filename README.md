@@ -159,8 +159,7 @@ Stores results computed by the backend Python analysis pipeline. Created/updated
     -   `elevation_category`: `STRING` (e.g., "Lowland", "Upland", based on DEM elevation)
     -   `geological_type`: `STRING` (Potential future field for detailed geological context)
     -   `estimated_displacement_dist`: `FLOAT` (Simplified estimation of glacial transport distance)
-    -   `vector_embedding`: `VECTOR(384)` or `JSONB` (Vector embedding from sentence transformer. Uses `VECTOR` if pgvector is enabled, otherwise `JSONB`).
-    -   `vector_embedding_data`: `JSONB` (Legacy/Redundant field if `vector_embedding` is used correctly).
+    -   `vector_embedding`: `VECTOR(384)` (Vector embedding from sentence transformer. Requires the `pgvector` PostgreSQL extension and corresponding Python package. The `vector_embedding_data` field has been removed.)
     -   `ruggedness_tri`: `FLOAT` (Terrain Ruggedness Index around the erratic, calculated from DEM)
     -   `terrain_landform`: `STRING` (Simplified landform classification based on DEM, e.g., 'flat_plain', 'hilly_or_mountainous')
     -   `terrain_slope_position`: `STRING` (Simplified slope position based on DEM, e.g., 'level', 'mid-slope')
@@ -184,9 +183,15 @@ Stores results computed by the backend Python analysis pipeline. Created/updated
 - `GET /api/erratics/nearby`: Get erratics near a specific location (lat, lng, radius).
 
 ### Public Analysis Endpoints (Trigger Python Scripts)
-- `GET /api/analysis/proximity/:id`: Calculates/retrieves proximity and context metrics for a specific erratic. **(Implementation Status: Backend script `proximity_analysis.py` exists and performs calculations, including terrain. Needs integration with Node.js endpoint and data persistence via `update_erratic_analysis_data`).**
-- `GET /api/analysis/classify/:id`: Classifies an erratic using pre-trained NLP models. **(Implementation Status: Backend script `classify_erratic.py` exists with separate train/classify modes. Needs integration with Node.js endpoint and data persistence via `update_erratic_analysis_data`).**
-- `GET /api/analysis/cluster`: Performs spatial clustering on all erratics. **(Implementation Status: Backend script `clustering.py` exists. Needs Node.js endpoint to trigger it and decide how results are stored/returned).**
+- `GET /api/analysis/proximity/:id`: Calculates/retrieves proximity and context metrics for a specific erratic. **(Fully implemented; calls `proximity_analysis.py` which handles calculations and DB updates via `data_loader.py`).**
+- `GET /api/analysis/classify/:id`: Classifies an erratic using pre-trained NLP models. **(Fully implemented; calls `classify_erratic.py` which handles classification and DB updates via `data_loader.py`).**
+- `GET /api/analysis/cluster`: Triggers spatial clustering on all erratics. This is an asynchronous operation that starts a background job. Results are typically written to a file specified by the Python script or logged by the backend.
+    - Query Parameters:
+        - `algorithm` (string, e.g., 'dbscan', 'kmeans', 'hierarchical', default: 'dbscan')
+        - `features` (string, comma-separated, e.g., 'latitude,longitude')
+        - `algoParams` (string, JSON string of algorithm-specific parameters, e.g., '{\"eps\":0.5,\"min_samples\":5}')
+        - `outputToFile` (string, 'true' or 'false', default: 'true' in Python script, controller passes this through)
+        - `outputFilename` (string, default: 'clustering_results.json' in Python script, controller passes this through)
 
 ### Protected Admin Endpoints
 - `POST /api/erratics`: Create a new erratic.
@@ -194,9 +199,10 @@ Stores results computed by the backend Python analysis pipeline. Created/updated
 - `DELETE /api/erratics/:id`: Delete an erratic.
 - `POST /api/auth/login`: Admin login.
 - `GET /api/auth/profile`: Get admin profile information.
-- `POST /api/analysis/proximity/batch`: Trigger proximity analysis for multiple erratic IDs. **(Implementation Status: Requires Node.js endpoint implementation to call `proximity_analysis.py` repeatedly or in batch mode).**
-- `POST /api/analysis/classify/batch`: Trigger NLP classification for multiple erratic IDs. **(Implementation Status: Requires Node.js endpoint implementation to call `classify_erratic.py`).**
-- **Trigger Topic Model Build:** No dedicated endpoint. Requires running `python backend/src/scripts/python/classify_erratic.py --build-topics` manually or via a custom admin action.
+- `POST /api/analysis/proximity/batch`: Trigger proximity analysis for multiple erratic IDs. **(Fully implemented; calls `proximity_analysis.py` in a loop).**
+- `POST /api/analysis/classify/batch`: Trigger NLP classification for multiple erratic IDs. **(Fully implemented; calls `classify_erratic.py` in a loop).**
+- `POST /api/analysis/build-topics`: Triggers the building/retraining of NLP topic models. This is an asynchronous, admin-only operation that starts a background job.
+    - Request Body: `{ "outputPath": "build_topics_result.json" }` (optional, specifies output log file for the Python script)
 
 ## Frontend Features
 
@@ -213,12 +219,15 @@ The frontend (`HomePage.jsx`) implements a dynamic filtering system allowing use
     -   The `FilterPanel.jsx` component consumes these definitions and the current filter state to render the UI for adding, editing, and toggling filters.
     -   Filter state (the list of currently applied filter configurations) is managed in `HomePage.jsx` and passed down to `FilterPanel.jsx`. Changes are propagated back via callback functions.
     -   The actual filtering logic is encapsulated in `filterUtils.js` (`passesAllFilters` function), which processes an erratic against the list of active filters.
--   **Current Filterable Attributes:**
+-   **Current Filterable Attributes (via `Erratic` and joined `ErraticAnalysis` fields):**
     -   Size (min/max `size_meters`)
     -   Proximity to Water (max `nearest_water_body_dist`)
     -   Rock Type (select from distinct `rock_type` values)
-    -   Usage Type (select from distinct `usage_type` tags)
-    -   Has Inscriptions (boolean `has_inscriptions`)
+    -   Usage Type (select from distinct `usage_type` tags from `ErraticAnalysis`)
+    -   Has Inscriptions (boolean `has_inscriptions` from `ErraticAnalysis`)
+    -   Accessibility Score (min/max `accessibility_score` from `ErraticAnalysis`, typically 1-5)
+    -   Terrain Landform (select from distinct `terrain_landform` values from `ErraticAnalysis`)
+    -   Proximity to Colonial Road (max `nearest_colonial_road_dist` from `ErraticAnalysis`)
 -   **Extensibility:**
     -   The system is designed to be extensible. New filters based on other intrinsic erratic properties or computed spatial analysis results (from the `ErraticAnalyses` table) can be added by:
         1.  Ensuring the relevant data fields (including those from `ErraticAnalyses`) are fetched with the erratic data in `HomePage.jsx`.

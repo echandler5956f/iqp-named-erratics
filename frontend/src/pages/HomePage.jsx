@@ -96,6 +96,67 @@ const GLOBAL_FILTER_DEFINITIONS = {
       </div>
     ),
   },
+  accessibility_score: {
+    label: 'Accessibility Score (1-5)',
+    defaultConfig: { min: null, max: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="minAccessibility">Min:</label>
+        <input
+          type="number"
+          id="minAccessibility"
+          min="1" max="5"
+          value={config.min ?? ''}
+          onChange={(e) => onChange({ ...config, min: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="1-5"
+        />
+        <label htmlFor="maxAccessibility">Max:</label>
+        <input
+          type="number"
+          id="maxAccessibility"
+          min="1" max="5"
+          value={config.max ?? ''}
+          onChange={(e) => onChange({ ...config, max: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="1-5"
+        />
+      </div>
+    ),
+  },
+  terrain_landform: {
+    label: 'Terrain Landform',
+    defaultConfig: { type: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="terrainLandform">Type:</label>
+        <select
+          id="terrainLandform"
+          value={config.type ?? ''}
+          onChange={(e) => onChange({ ...config, type: e.target.value })}
+        >
+          <option value="">Any Landform</option>
+          {distinctTerrainLandforms.map(type => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+      </div>
+    ),
+  },
+  nearest_colonial_road_dist: {
+    label: 'Proximity to Colonial Road (m)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistColonialRoad">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistColonialRoad"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance in meters"
+        />
+      </div>
+    ),
+  },
 };
 
 function HomePage() {
@@ -145,6 +206,13 @@ function HomePage() {
       }
     });
     return Array.from(tags).sort();
+  }, [allErraticData]);
+
+  const distinctTerrainLandforms = useMemo(() => {
+    if (!Array.isArray(allErraticData)) return [];
+    // Assuming terrain_landform is a direct property on the erratic object, potentially from a join with ErraticAnalysis
+    const landforms = new Set(allErraticData.map(e => e.terrain_landform).filter(Boolean)); 
+    return Array.from(landforms).sort();
   }, [allErraticData]);
   // --- End Distinct Values ---
 
@@ -237,7 +305,68 @@ function HomePage() {
           );
         }
      },
-  }), [distinctRockTypes, distinctUsageTags]);
+     accessibility_score: {
+      label: 'Accessibility Score (1-5)',
+      defaultConfig: { min: null, max: null },
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="minAccessibility">Min:</label>
+          <input
+            type="number"
+            id="minAccessibility"
+            min="1" max="5"
+            value={config.min ?? ''}
+            onChange={(e) => onChange({ ...config, min: e.target.value ? parseInt(e.target.value, 10) : null })}
+            placeholder="1-5"
+          />
+          <label htmlFor="maxAccessibility">Max:</label>
+          <input
+            type="number"
+            id="maxAccessibility"
+            min="1" max="5"
+            value={config.max ?? ''}
+            onChange={(e) => onChange({ ...config, max: e.target.value ? parseInt(e.target.value, 10) : null })}
+            placeholder="1-5"
+          />
+        </div>
+      ),
+    },
+    terrain_landform: {
+      label: 'Terrain Landform',
+      defaultConfig: { type: '' },
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="terrainLandform">Type:</label>
+          <select
+            id="terrainLandform"
+            value={config.type ?? ''}
+            onChange={(e) => onChange({ ...config, type: e.target.value })}
+          >
+            <option value="">Any Landform</option>
+            {distinctTerrainLandforms.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
+    nearest_colonial_road_dist: {
+      label: 'Proximity to Colonial Road (m)',
+      defaultConfig: { maxDist: null },
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="maxDistColonialRoad">Max Distance:</label>
+          <input
+            type="number"
+            id="maxDistColonialRoad"
+            value={config.maxDist ?? ''}
+            onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+            placeholder="Max distance in meters"
+          />
+        </div>
+      ),
+    },
+  }), [distinctRockTypes, distinctUsageTags, distinctTerrainLandforms]);
 
   // --- HOOKS USING GLOBAL_FILTER_DEFINITIONS --- 
   const activeFilters = useMemo(() => filters.filter(f => f.isActive), [filters]);

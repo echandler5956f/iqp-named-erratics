@@ -126,12 +126,13 @@ class ErraticClassifier:
         
         return " ".join(tokens)
     
-    def generate_embedding(self, text: str) -> np.ndarray:
+    def generate_embedding(self, text: str, normalize: bool = True) -> np.ndarray:
         """
-        Generate vector embedding for text using sentence transformers
+        Generate vector embedding for text using sentence transformers.
         
         Args:
             text: Text to generate embedding for
+            normalize: Whether to L2-normalize the vector (recommended for cosine similarity)
             
         Returns:
             Vector embedding as numpy array
@@ -140,8 +141,26 @@ class ErraticClassifier:
             raise ValueError("Text must be a non-empty string")
         
         # Generate embedding using transformer model
-        embedding = self.embedding_model.encode(text)
-        return embedding
+        try:
+            embedding = self.embedding_model.encode(text, normalize_embeddings=normalize)
+            
+            # Ensure the embedding is a 1D array with the expected dimensions
+            if embedding.ndim > 1:
+                # If multi-dimensional (e.g., batch processing), take first embedding
+                embedding = embedding[0]
+                
+            # Log some diagnostic info about the embedding
+            logger.debug(f"Generated embedding with shape: {embedding.shape}, dtype: {embedding.dtype}")
+            
+            # For pgvector compatibility with PostgreSQL, ensure the precision is float32
+            # as some PostgreSQL drivers expect this. This is important for the VECTOR type.
+            embedding = embedding.astype(np.float32)
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Error generating embedding: {e}")
+            raise RuntimeError(f"Failed to generate vector embedding: {e}")
     
     def discover_topics(self, text_corpus: List[str], documents_metadata: List[Dict]) -> Dict:
         """
@@ -196,6 +215,7 @@ class ErraticClassifier:
             
             # Extract topic information
             topic_info = self.topic_model.get_topic_info()
+            logger.debug(f"BERTopic topic_info head:\n{topic_info.head().to_string()}")
             
             # Get representative documents for each topic
             topic_docs = {}
@@ -216,18 +236,42 @@ class ErraticClassifier:
             # Save for later use
             self.topic_words = topic_words
             
-            # Calculate topic coherence
-            coherence = self.topic_model.calculate_topic_coherence(
-                corpus=text_corpus, 
-                topics=list(set(topics) - {-1})
-            )
+            # Calculate topic coherence - version-agnostic approach
+            coherence_values = None
+            # Check if a coherence-related column exists in topic_info
+            # Common column names for coherence in BERTopic's topic_info DataFrame
+            possible_coherence_columns = ['Coherence', 'c_v', 'NPMI', 'UMass'] 
+            coherence_col_found = None
+            for col_name in possible_coherence_columns:
+                if col_name in topic_info.columns:
+                    coherence_col_found = col_name
+                    break
+            
+            if coherence_col_found:
+                # Filter out outlier topic (-1) if present, and NaN values from the coherence column
+                # Ensure 'Topic' column exists before trying to filter by it
+                if 'Topic' in topic_info.columns:
+                    valid_coherence_scores = topic_info[topic_info['Topic'] != -1][coherence_col_found].dropna().tolist()
+                else:
+                    # If 'Topic' column is missing, use all coherence scores, hoping outliers are handled or absent
+                    logger.warning("'Topic' column not found in topic_info. Using all available coherence scores.")
+                    valid_coherence_scores = topic_info[coherence_col_found].dropna().tolist()
+                
+                if valid_coherence_scores:
+                    coherence_values = valid_coherence_scores
+                    logger.info(f"Extracted coherence scores from topic_info (column: '{coherence_col_found}'): {coherence_values}")
+                else:
+                    logger.warning(f"Coherence column '{coherence_col_found}' found in topic_info, but no valid scores for non-outlier topics.")
+            else:
+                logger.warning(f"No standard coherence column found in topic_info ({', '.join(possible_coherence_columns)}).")
+                logger.warning("The method 'calculate_topic_coherence' is unavailable in this BERTopic version. Coherence will be reported as None.")
             
             return {
                 "num_topics": len(set(topics)) - (1 if -1 in topics else 0),
                 "topic_words": topic_words,
                 "document_topics": {i: int(t) for i, t in enumerate(topics)},
                 "topic_documents": topic_docs,
-                "coherence": float(np.mean(coherence)) if coherence else None,
+                "coherence": float(np.mean(coherence_values)) if coherence_values and len(coherence_values) > 0 else None,
                 "method": self.model_method
             }
         else:
@@ -465,22 +509,63 @@ class ErraticClassifier:
         model_metadata = {
             'model_method': self.model_method,
             'embedding_model_name': self.embedding_model_name,
-            'timestamp': pd.Timestamp.now().isoformat()
+            'timestamp': pd.Timestamp.now().isoformat(),
+            'topic_count': len(self.topic_words) if hasattr(self, 'topic_words') and self.topic_words else 0,
+            'version': '1.1' # Add version tracking for future compatibility
         }
-        with open(os.path.join(save_dir, 'model_metadata.json'), 'w') as f:
-            json.dump(model_metadata, f)
+        
+        metadata_path = os.path.join(save_dir, 'model_metadata.json')
+        try:
+            with open(metadata_path, 'w') as f:
+                json.dump(model_metadata, f, indent=2)
+                logger.info(f"Saved model metadata to {metadata_path}")
+        except Exception as e:
+            logger.error(f"Failed to save model metadata to {metadata_path}: {e}")
+            raise RuntimeError(f"Failed to save model metadata: {e}")
+
+        # Always save topic_words mapping separately for easy access
+        topic_words_path = os.path.join(save_dir, 'topic_words.json')
+        try:
+            with open(topic_words_path, 'w') as f:
+                json.dump(self.topic_words, f, indent=2)
+                logger.info(f"Saved topic words mapping to {topic_words_path}")
+        except Exception as e:
+            logger.error(f"Failed to save topic words to {topic_words_path}: {e}")
+            # Non-fatal, continue with other saves
 
         # Save based on method
-        if self.model_method == 'bertopic' and ADVANCED_TOPIC_MODELING:
-            self.topic_model.save(os.path.join(save_dir, "bertopic_model"), serialization="pytorch")
-            logger.info("BERTopic model saved.")
-        elif self.model_method == 'lda':
-            joblib.dump(self.topic_model, os.path.join(save_dir, 'lda_model.joblib'))
-            if self.vectorizer:
-                joblib.dump(self.vectorizer, os.path.join(save_dir, 'vectorizer.joblib'))
-            logger.info("LDA model and vectorizer saved.")
-        else:
-            logger.error(f"Unknown or unsupported model method '{self.model_method}' for saving.")
+        try:
+            if self.model_method == 'bertopic' and ADVANCED_TOPIC_MODELING:
+                model_path = os.path.join(save_dir, "bertopic_model")
+                self.topic_model.save(model_path, serialization="pytorch")
+                logger.info(f"BERTopic model saved to {model_path}")
+                
+                # Save topic labels mapping if exists
+                if hasattr(self, 'topic_labels') and self.topic_labels:
+                    topic_labels_path = os.path.join(save_dir, 'topic_labels.json')
+                    with open(topic_labels_path, 'w') as f:
+                        json.dump(self.topic_labels, f, indent=2)
+                        logger.info(f"Saved topic labels to {topic_labels_path}")
+                        
+            elif self.model_method == 'lda':
+                model_path = os.path.join(save_dir, 'lda_model.joblib')
+                vectorizer_path = os.path.join(save_dir, 'vectorizer.joblib')
+                
+                joblib.dump(self.topic_model, model_path)
+                logger.info(f"LDA model saved to {model_path}")
+                
+                if self.vectorizer:
+                    joblib.dump(self.vectorizer, vectorizer_path)
+                    logger.info(f"Vectorizer saved to {vectorizer_path}")
+            else:
+                logger.error(f"Unknown or unsupported model method '{self.model_method}' for saving.")
+                raise ValueError(f"Cannot save model with unsupported method: {self.model_method}")
+                
+        except Exception as e:
+            logger.error(f"Error saving model components: {e}")
+            raise RuntimeError(f"Failed to save model: {e}")
+            
+        logger.info(f"Successfully saved all model components to {save_dir}")
 
     def load_model(self, model_dir: Optional[str] = None):
         """Loads trained models from the specified directory."""
@@ -491,42 +576,99 @@ class ErraticClassifier:
         if not os.path.exists(metadata_path):
             raise FileNotFoundError(f"Model metadata file not found at {metadata_path}. Cannot load model.")
         
-        with open(metadata_path, 'r') as f:
-            model_metadata = json.load(f)
+        try:
+            with open(metadata_path, 'r') as f:
+                model_metadata = json.load(f)
+                
+            self.model_method = model_metadata.get('model_method')
+            loaded_embedding_name = model_metadata.get('embedding_model_name')
+            model_version = model_metadata.get('version', '1.0')
+            logger.info(f"Loading {self.model_method} model (version {model_version})")
             
-        self.model_method = model_metadata.get('model_method')
-        loaded_embedding_name = model_metadata.get('embedding_model_name')
-        
-        # Verify embedding model consistency
-        if loaded_embedding_name != self.embedding_model_name:
-            logger.warning(f"Loaded model used embedding '{loaded_embedding_name}', but current instance uses '{self.embedding_model_name}'. Results may vary.")
-            # Optionally, reload the correct embedding model here if needed
-            # self.embedding_model = SentenceTransformer(loaded_embedding_name)
-
-        if self.model_method == 'bertopic' and ADVANCED_TOPIC_MODELING:
-            model_path = os.path.join(load_dir, "bertopic_model")
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"BERTopic model not found at {model_path}")
-            self.topic_model = BERTopic.load(model_path)
-            # BERTopic loads associated components like UMAP, HDBSCAN automatically
-            self.topic_words = {t: [w[0] for w in self.topic_model.get_topic(t)] for t in self.topic_model.get_topics() if t != -1}
-            logger.info("BERTopic model loaded successfully.")
-        elif self.model_method == 'lda':
-            model_path = os.path.join(load_dir, 'lda_model.joblib')
-            vectorizer_path = os.path.join(load_dir, 'vectorizer.joblib')
-            if not os.path.exists(model_path) or not os.path.exists(vectorizer_path):
-                 raise FileNotFoundError("LDA model or vectorizer file not found.")
-            self.topic_model = joblib.load(model_path)
-            self.vectorizer = joblib.load(vectorizer_path)
-            # Reconstruct topic words if needed (usually stored separately or re-derived)
-            feature_names = self.vectorizer.get_feature_names_out()
-            self.topic_words = {}
-            for topic_id, topic in enumerate(self.topic_model.components_):
-                 top_words_idx = topic.argsort()[:-15-1:-1]
-                 self.topic_words[topic_id] = [feature_names[i] for i in top_words_idx]
-            logger.info("LDA model and vectorizer loaded successfully.")
-        else:
-            raise ValueError(f"Unknown or unsupported model method '{self.model_method}' found in metadata.")
+            # Verify embedding model consistency
+            if loaded_embedding_name != self.embedding_model_name:
+                logger.warning(f"Loaded model used embedding '{loaded_embedding_name}', but current instance uses '{self.embedding_model_name}'. Results may vary.")
+                # Optionally, reload the correct embedding model here if needed
+                # self.embedding_model = SentenceTransformer(loaded_embedding_name)
+    
+            # Try to load topic_words from separate file
+            topic_words_path = os.path.join(load_dir, 'topic_words.json')
+            if os.path.exists(topic_words_path):
+                try:
+                    with open(topic_words_path, 'r') as f:
+                        # Convert string keys to int for topic IDs
+                        topic_words_data = json.load(f)
+                        self.topic_words = {int(k): v for k, v in topic_words_data.items()}
+                        logger.info(f"Loaded topic words mapping with {len(self.topic_words)} topics")
+                except Exception as tw_err:
+                    logger.warning(f"Could not load topic_words.json: {tw_err}. Will derive from model.")
+            
+            # Try to load topic_labels if exists
+            topic_labels_path = os.path.join(load_dir, 'topic_labels.json')
+            if os.path.exists(topic_labels_path):
+                try:
+                    with open(topic_labels_path, 'r') as f:
+                        topic_labels_data = json.load(f)
+                        self.topic_labels = {int(k): v for k, v in topic_labels_data.items()}
+                        logger.info(f"Loaded topic labels for {len(self.topic_labels)} topics")
+                except Exception as tl_err:
+                    logger.warning(f"Could not load topic_labels.json: {tl_err}")
+    
+            if self.model_method == 'bertopic' and ADVANCED_TOPIC_MODELING:
+                model_path = os.path.join(load_dir, "bertopic_model")
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"BERTopic model not found at {model_path}")
+                try:
+                    self.topic_model = BERTopic.load(model_path)
+                    logger.info(f"BERTopic model loaded successfully with {len(self.topic_model.get_topics())} topics")
+                    
+                    # If topic_words wasn't loaded from file, derive from model
+                    if not hasattr(self, 'topic_words') or not self.topic_words:
+                        self.topic_words = {t: [w[0] for w in self.topic_model.get_topic(t)] 
+                                           for t in self.topic_model.get_topics() if t != -1}
+                        logger.info(f"Derived topic words for {len(self.topic_words)} topics from model")
+                except Exception as bert_err:
+                    logger.error(f"Failed to load BERTopic model: {bert_err}")
+                    raise RuntimeError(f"Failed to load BERTopic model: {bert_err}")
+                    
+            elif self.model_method == 'lda':
+                model_path = os.path.join(load_dir, 'lda_model.joblib')
+                vectorizer_path = os.path.join(load_dir, 'vectorizer.joblib')
+                
+                # Check files exist
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"LDA model file not found at {model_path}")
+                if not os.path.exists(vectorizer_path):
+                    raise FileNotFoundError(f"Vectorizer file not found at {vectorizer_path}")
+                
+                try:
+                    self.topic_model = joblib.load(model_path)
+                    self.vectorizer = joblib.load(vectorizer_path)
+                    logger.info(f"LDA model with {self.topic_model.n_components} topics loaded successfully")
+                    
+                    # If topic_words wasn't loaded from file, derive from model
+                    if not hasattr(self, 'topic_words') or not self.topic_words:
+                        feature_names = self.vectorizer.get_feature_names_out()
+                        self.topic_words = {}
+                        for topic_id, topic in enumerate(self.topic_model.components_):
+                            top_words_idx = topic.argsort()[:-15-1:-1]
+                            self.topic_words[topic_id] = [feature_names[i] for i in top_words_idx]
+                        logger.info(f"Derived topic words for {len(self.topic_words)} topics from LDA model")
+                except Exception as lda_err:
+                    logger.error(f"Failed to load LDA model or vectorizer: {lda_err}")
+                    raise RuntimeError(f"Failed to load LDA model: {lda_err}")
+            else:
+                raise ValueError(f"Unknown or unsupported model method '{self.model_method}' found in metadata.")
+                
+        except FileNotFoundError as fnf:
+            logger.error(f"File not found during model loading: {fnf}")
+            raise
+        except json.JSONDecodeError as jde:
+            logger.error(f"Invalid JSON in metadata file: {jde}")
+            raise RuntimeError(f"Could not parse model metadata: {jde}")
+        except Exception as e:
+            logger.error(f"Unexpected error loading model: {e}")
+            raise RuntimeError(f"Model loading failed: {e}")
 
 def build_topic_model(classifier: ErraticClassifier) -> Dict:
     """
@@ -580,6 +722,7 @@ def main():
     parser.add_argument('--update-db', action='store_true', help='Update database with results')
     parser.add_argument('--output', type=str, help='Output file for results (JSON)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
+    parser.add_argument('--model-dir', type=str, help='Custom directory for model saving/loading')
     
     args = parser.parse_args()
     
@@ -587,43 +730,70 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    # Create classifier
-    classifier = ErraticClassifier()
+    # Create classifier with optional custom model directory
+    model_dir = args.model_dir or MODEL_SAVE_DIR
+    classifier = ErraticClassifier(model_dir=model_dir)
+    logger.info(f"Using model directory: {model_dir}")
     
-    # Build topic model if requested
+    # PHASE 1: Topic Model Building (if requested)
     topic_model_results = None
     if args.build_topics:
-        logger.info("Building topic model from all erratics")
-        topic_model_results = build_topic_model(classifier)
-        
-        # Save topic model results if requested
-        if args.output:
-            topic_output = f"{os.path.splitext(args.output)[0]}_topics.json"
-            json_to_file(topic_model_results, topic_output)
-            logger.info(f"Saved topic model results to {topic_output}")
-        
-        # Save the trained model
-        classifier.save_model()
-    else:
-        # If not building, load the pre-trained model
+        logger.info(f"PHASE 1: Building topic model from all erratics (this may take several minutes)...")
+        start_time = pd.Timestamp.now()
         try:
-            classifier.load_model() 
+            topic_model_results = build_topic_model(classifier)
+            
+            # Log key information about the built model
+            num_topics = topic_model_results.get('num_topics', 0)
+            method = topic_model_results.get('method', 'unknown')
+            coherence = topic_model_results.get('coherence', 'N/A')
+            
+            logger.info(f"Successfully built topic model with {num_topics} topics using {method}")
+            logger.info(f"Model coherence: {coherence}")
+            
+            # Save topic model results if requested
+            if args.output:
+                topic_output = f"{os.path.splitext(args.output)[0]}_topics.json"
+                json_to_file(topic_model_results, topic_output)
+                logger.info(f"Saved topic model results to {topic_output}")
+            
+            # Save the trained model
+            logger.info(f"Saving trained model to {model_dir}...")
+            classifier.save_model()
+            
+            # Calculate elapsed time
+            elapsed = (pd.Timestamp.now() - start_time).total_seconds()
+            logger.info(f"Topic model building completed in {elapsed:.1f} seconds")
+            
+        except Exception as e:
+            logger.error(f"Failed to build topic model: {e}")
+            if args.verbose:
+                import traceback
+                logger.error(traceback.format_exc())
+            print(json.dumps({"error": f"Topic model building failed: {str(e)}"}, indent=2))
+            return 1
+            
+    # PHASE 2: Erratic Classification (always performed unless model building failed)
+    logger.info(f"PHASE 2: Classifying erratic {args.erratic_id}...")
+    
+    # If not building topics, load the pre-trained model
+    if not args.build_topics:
+        try:
+            logger.info(f"Loading pre-trained topic model from {model_dir}...")
+            classifier.load_model()
             topic_model_available = True
+            logger.info("Model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load pre-trained topic model: {e}")
             logger.error("Run with --build-topics first to create the model.")
-            topic_model_available = False
-            # Decide if we should exit if model loading fails and --build wasn't specified
-            # For now, we allow proceeding but classification will likely fail if needed later.
-            # A better approach might be to exit here if classification is the goal.
-            # Let's proceed assuming maybe only DB update or output is needed for an existing run.
-            # But classification step below will fail if model isn't loaded.
+            if args.verbose:
+                import traceback
+                logger.error(traceback.format_exc())
+            print(json.dumps({"error": f"Failed to load topic model: {str(e)}"}, indent=2))
+            return 1
 
-    # If build_topics was run, topic_model_results dictionary is available for saving.
-    # If not building, topic_model_results remains None.
-
-    # Load erratic data
-    logger.info(f"Loading data for erratic {args.erratic_id}")
+    # Load erratic data for classification
+    logger.info(f"Loading data for erratic ID {args.erratic_id}...")
     erratic_data = load_erratic_by_id(args.erratic_id)
     
     if not erratic_data:
@@ -631,41 +801,59 @@ def main():
         print(json.dumps({"error": f"Erratic with ID {args.erratic_id} not found"}, indent=2))
         return 1
     
-    # Classify erratic
-    logger.info(f"Classifying erratic {args.erratic_id}")
+    # Perform classification
+    logger.info(f"Classifying erratic {args.erratic_id}: {erratic_data.get('name', 'Unknown')}")
     try:
-        # Classification now uses the loaded/trained model within the classifier instance
+        # Classification uses the loaded/trained model within the classifier instance
         results = classifier.classify(erratic_data)
+        logger.info(f"Classification successful")
     except Exception as e:
         logger.error(f"Classification error: {e}")
+        if args.verbose:
+            import traceback
+            logger.error(traceback.format_exc())
         print(json.dumps({"error": f"Classification failed: {str(e)}"}, indent=2))
         return 1
     
-    # Update database if requested
+    # PHASE 3: Database Update (if requested)
     if args.update_db:
-        logger.info(f"Updating database with classification for erratic {args.erratic_id}")
+        logger.info(f"PHASE 3: Updating database with classification results...")
+        # Prepare vector embedding for database storage - support both JSONB and pgvector
+        vector_embedding = results["vector_embedding"]
+        
+        # For pgvector compatibility, PostgreSQL expects a specific format
+        # 1. For VECTOR type: the raw list/array is properly handled by psycopg2's adapter
+        # 2. For JSONB storage: we convert to list to ensure compatibility
+        
         update_data = {
-            # Assuming top_categories[0] (dominant topic ID) maps to usage_type somehow.
-            # This mapping might need refinement. For now, store the topic ID list or primary ID.
-            "usage_type": str(results["classification"]["top_categories"][0]) if results["classification"]["top_categories"] else None, 
+            # Map top_categories to usage_type (as array of strings for compatibility)
+            "usage_type": [str(topic_id) for topic_id in results["classification"]["top_categories"]] if results["classification"]["top_categories"] else [],
             "cultural_significance_score": results["classification"]["cultural_significance_score"],
-            "vector_embedding": results["vector_embedding"],
+            "vector_embedding": vector_embedding,  # Already as list format
             "has_inscriptions": results["classification"]["has_inscriptions"]
         }
+        
+        logger.info(f"Updating database with: usage_type={update_data['usage_type']}, " +
+                    f"cultural_significance_score={update_data['cultural_significance_score']}, " +
+                    f"has_inscriptions={update_data['has_inscriptions']}, " +
+                    f"vector_embedding length={len(update_data['vector_embedding']) if update_data['vector_embedding'] else 0}")
+        
         success = update_erratic_analysis_data(args.erratic_id, update_data)
         results['database_updated'] = success
         logger.info(f"Database update {'succeeded' if success else 'failed'}")
     
-    # Write to output file if specified
+    # Write complete results to output file if specified
     if args.output:
-        logger.info(f"Writing results to {args.output}")
+        logger.info(f"Writing classification results to {args.output}")
         json_to_file(results, args.output)
     
-    # Remove embedding from console output to reduce verbosity
+    # For console output, remove embedding to reduce verbosity
     results_output = results.copy()
     if 'vector_embedding' in results_output:
+        embedding_length = len(results_output['vector_embedding']) if results_output['vector_embedding'] else 0
         del results_output['vector_embedding']
-        logger.info(f"Removed vector embedding from console output")
+        results_output['vector_embedding_length'] = embedding_length
+        logger.info(f"Removed vector embedding ({embedding_length} dims) from console output")
     
     # Print results as JSON to stdout
     print(json.dumps(results_output, indent=2))

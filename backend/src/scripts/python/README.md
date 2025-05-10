@@ -1,113 +1,83 @@
 # Glacial Erratics Spatial Analysis Tools
 
-This directory contains the Python-based spatial analysis and machine learning components for the North American Named Glacial Erratics project. These tools provide advanced geospatial analysis, classification, and clustering capabilities.
+This directory contains the Python-based spatial analysis and machine learning components for the North American Named Glacial Erratics project. These scripts provide advanced geospatial analysis, classification, and clustering capabilities and are primarily designed to be invoked by the Node.js backend.
 
 ## Environment Setup
 
-The spatial analysis tools require Python 3.10+ and numerous specialized libraries for geospatial analysis, machine learning, and natural language processing. We use a conda environment to manage these dependencies.
+The spatial analysis tools require Python 3.10+ and a number of specialized libraries. Dependencies are managed via `requirements.txt`.
 
-### Setting Up the Environment
+1.  **Create a Python Environment**: It's highly recommended to use a virtual environment (e.g., venv, conda).
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate # On Windows: .venv\Scripts\activate
+    ```
+2.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+    This will install all necessary packages, including `geopandas`, `scikit-learn`, `sentence-transformers`, `psycopg2-binary`, and `pgvector` (for PostgreSQL vector type support).
 
-1. **Install Conda**:
-   If you don't have conda installed, download and install Miniconda from [here](https://docs.conda.io/en/latest/miniconda.html).
+3.  **Download NLP Models**:
+    ```bash
+    python -m spacy download en_core_web_md
+    # python -m spacy download en_core_web_lg # Optional, larger model
+    # NLTK data (if not already present from previous project setup)
+    # import nltk; nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('punkt')
+    ```
+4.  **GDAL/OGR**: Ensure `ogr2ogr` (part of GDAL) is installed and in your system PATH for processing OpenStreetMap PBF data. See main project `README.md` for installation guidance.
 
-2. **Create the Environment**:
-   Run the provided script to create the conda environment:
+## Script Usage (from Node.js via `pythonService.js`)
 
-   ```bash
-   chmod +x create_conda_env.sh
-   ./create_conda_env.sh
-   ```
+The Node.js backend service (`pythonService.js`) invokes these scripts directly with specific arguments.
 
-   This will create a new conda environment named `iqp-py310` and install all required packages.
+### `proximity_analysis.py`
+Calculates proximity to various features and other contextual metrics.
+-   **Node.js Call Signature (via `pythonService.runProximityAnalysis`)**:
+    -   `erraticId` (integer, required): The ID of the erratic.
+    -   `featureLayers` (array of strings, optional): Specific feature layers to analyze.
+    -   `updateDb` (boolean, optional): If true, script attempts to update `ErraticAnalyses` table via `data_loader.py`.
+-   **Direct Command-Line Example**:
+    ```bash
+    python proximity_analysis.py <erratic_id> [--features layer1 layer2] [--update-db] [--output results.json]
+    ```
 
-3. **Activate the Environment**:
-   ```bash
-   conda activate iqp-py310
-   ```
+### `classify_erratic.py`
+Handles NLP tasks: text preprocessing, generating sentence embeddings, training/loading topic models, and classifying erratics.
 
-4. **Verify the Setup**:
-   Run the environment test to verify that all dependencies are installed correctly:
+1.  **Classification Mode**:
+    -   **Node.js Call Signature (via `pythonService.runClassification`)**:
+        -   `erraticId` (integer, required): The ID of the erratic to classify.
+        -   `updateDb` (boolean, optional): If true, script attempts to update `ErraticAnalyses` table.
+    -   **Direct Command-Line Example**:
+        ```bash
+        python classify_erratic.py <erratic_id> [--update-db] [--output classification.json]
+        ```
 
-   ```bash
-   python test_environment.py
-   ```
+2.  **Topic Model Building Mode**:
+    -   **Node.js Call Signature (via `pythonService.runBuildTopicModels`)**:
+        -   `outputPath` (string, optional): Path to save the output/log of the build process (e.g., 'build_topics_result.json').
+    -   **Direct Command-Line Example (as used by `pythonService.js`)**:
+        ```bash
+        # <placeholder_id> is required by script structure but not used for building.
+        python classify_erratic.py 1 --build-topics --output <outputPath>
+        ```
 
-### Fixing Environment Issues
+### `clustering.py`
+Performs spatial clustering on erratics.
+-   **Node.js Call Signature (via `pythonService.runClusteringAnalysis`)**:
+    -   `algorithm` (string, required): e.g., 'dbscan', 'kmeans', 'hierarchical'.
+    -   `featuresToCluster` (array of strings, optional): Features to use (e.g., ['latitude', 'longitude']).
+    -   `algoParams` (object, optional): Algorithm-specific parameters as a JSON string (e.g., `JSON.stringify({ eps: 0.5 })`).
+    -   `outputToFile` (boolean, optional): Passed as `--output <filename>` if true.
+    -   `outputFilename` (string, optional): Filename for output if `outputToFile` is true.
+-   **Direct Command-Line Example**:
+    ```bash
+    python clustering.py --algorithm dbscan [--features lat lon] [--algo_params '{"eps":0.5}'] [--output results.json]
+    ```
 
-If you encounter compatibility errors, especially between numpy and scipy, use the provided fix script:
-
-```bash
-chmod +x fix_env.sh
-./fix_env.sh
-```
-
-This script reinstalls compatible versions of critical packages and resolves common issues.
-
-Common issues and their fixes:
-
-1. **numpy/scipy compatibility error** (`ValueError: All ufuncs must have type numpy.ufunc`):
-   ```bash
-   conda install -y numpy=1.24.3 scipy=1.11.4 scikit-learn=1.2.2
-   ```
-
-2. **Missing spaCy models**:
-   ```bash
-   python -m spacy download en_core_web_md
-   python -m spacy download en_core_web_lg
-   ```
-
-## Using the Analysis Tools
-
-The `run_analysis.py` script provides a unified interface for running the various analysis tools. Here are some common use cases:
-
-### Proximity Analysis
-
-Calculate distances from an erratic to various geographic features:
-
-```bash
-python run_analysis.py proximity 123 --update-db
-```
-
-Where `123` is the ID of the erratic to analyze.
-
-### Classification
-
-Classify an erratic based on its description and attributes:
-
-```bash
-python run_analysis.py classify 123 --update-db
-```
-
-### Clustering Analysis
-
-Perform spatial clustering of all erratics:
-
-```bash
-python run_analysis.py cluster --output cluster_results.json
-```
-
-### Testing the Environment
-
-Run a comprehensive test of the Python environment:
-
-```bash
-python run_analysis.py test-env
-```
-
-## Individual Scripts
-
-If needed, you can also run the individual scripts directly:
-
-- `proximity_analysis.py`: Calculate distances to geographic features
-- `classify_erratic.py`: Classify erratics using NLP and ML
-- `setup_env.py`: Check and install required packages
-- `test_environment.py`: Test that all dependencies are working
-- `fix_env.sh`: Fix common environment issues
-
-## Integration with Node.js Backend
-
-These Python scripts are called from the Node.js backend using the `pythonService.js` service, which handles spawning Python processes with the correct environment.
+### Utility Scripts
+-   `utils/data_loader.py`: Manages database connections (using `psycopg2` and `pgvector` for vector types), data fetching from PostgreSQL, downloading/caching external datasets, and updating the `ErraticAnalyses` table.
+-   `utils/geo_utils.py`: Provides core geospatial functions.
 
 ## Data Storage
 

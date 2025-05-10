@@ -17,17 +17,28 @@ plotly>=5.7.0 # Needed for bertopic
 # Database connectivity
 psycopg2-binary>=2.9.3
 SQLAlchemy>=1.4.0
+python-dotenv>=0.20.0  # For .env file handling
+pgvector>=0.2.0 # For PostgreSQL vector type support
 
 # Geographic and spatial processing
 geopandas>=0.10.0
 shapely>=1.8.0
 pyproj>=3.3.0
 rtree>=1.0.0
+pyarrow>=8.0.0  # For Feather file caching
+requests>=2.27.0  # For API requests
 
-# Added for DEM processing
-rasterio
+# Raster data handling
+rasterio>=1.2.10  # For DEM data processing
+matplotlib>=3.5.0  # For terrain visualization if needed
 
 # After pip installing these packages, run: 
 # python -m spacy download en_core_web_md
 # python -m spacy download en_core_web_lg
-# python -m nltk.downloader stopwords wordnet punkt averaged_perceptron_tagger 
+# python -m nltk.downloader stopwords wordnet punkt averaged_perceptron_tagger
+
+# External tool dependencies (install via system package manager):
+# - GDAL/OGR with ogr2ogr command-line tool (for OSM PBF processing)
+# Example: sudo apt install gdal-bin (Debian/Ubuntu)
+#          brew install gdal (macOS with Homebrew)
+#          conda install -c conda-forge gdal (Anaconda) 

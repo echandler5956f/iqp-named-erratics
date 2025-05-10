@@ -65,6 +65,10 @@ DATA_URLS = {
     
     # CGIAR-CSI SRTM 90m v4.1 (FTP base URL - function handles tiling)
     'elevation_srtm90_csi': 'ftp://srtm.csi.cgiar.org/SRTM_V41/SRTM_Data_GeoTiff/', 
+    
+    # Alternative elevation data source for high latitudes (>60 degrees)
+    # This URL points to a North America-focused DEM that includes Arctic regions 
+    'elevation_dem_na': 'https://www.ngdc.noaa.gov/mgg/topo/gltiles/arctic/arctic.tgz'
 }
 
 # Ensure directories exist
@@ -199,16 +203,18 @@ def _process_osm_pbf_with_ogr(pbf_filepath: str, output_geojson_path: str, osm_e
         output_geojson_path,
         pbf_filepath,
         osm_entity_type,  
-        '-sql', f"SELECT osm_id, name, other_tags, highway, place FROM {osm_entity_type} WHERE {sql_filter}", 
+        '-sql', f"SELECT osm_id, name, other_tags, highway, place FROM \"{osm_entity_type}\" WHERE {sql_filter}", 
         '-nln', target_layer_name, 
         '-lco', 'WRITE_BBOX=YES',
         '-lco', 'RFC7946=YES',
-        '-dim', '2' 
+        '-dim', '2',
+        '-gt', '65536' # Added for potentially better performance/handling of large datasets
     ]
 
     logger.info(f"Executing ogr2ogr command: {' '.join(command)}")
     try:
         if os.path.exists(output_geojson_path):
+            logger.info(f"Removing existing intermediate GeoJSON: {output_geojson_path}")
             os.remove(output_geojson_path)
             
         result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
@@ -298,12 +304,13 @@ def load_erratics() -> gpd.GeoDataFrame:
             ea.usage_type, ea.cultural_significance_score,
             ea.has_inscriptions, ea.accessibility_score,
             ea.size_category, ea.nearest_water_body_dist,
-            ea.nearest_settlement_dist, ea.elevation_category
+            ea.nearest_settlement_dist, ea.elevation_category,
+            ea.vector_embedding -- Unccomment to load vector embedding
             -- Removed potentially missing columns based on repeated DB errors:
             -- ea.nearest_colonial_settlement_dist, ea.nearest_road_dist,
             -- ea.nearest_colonial_road_dist, ea.nearest_native_territory_dist, 
             -- ea.geological_type, ea.estimated_displacement_dist,
-            -- ea.vector_embedding, ea.vector_embedding_data
+            -- ea.vector_embedding_data
         FROM 
             "Erratics" e
         LEFT JOIN 
@@ -312,6 +319,26 @@ def load_erratics() -> gpd.GeoDataFrame:
         
         gdf = gpd.read_postgis(query, conn, geom_col='location', crs='EPSG:4326') # Assuming source CRS is 4326
         
+        # Process vector_embedding column if it exists
+        if 'vector_embedding' in gdf.columns:
+            if gdf['vector_embedding'].dtype == 'object':
+                logger.info("Processing string-based vector_embedding column into lists of floats...")
+                def parse_embedding_str(embedding_str):
+                    if pd.isna(embedding_str) or not isinstance(embedding_str, str):
+                        return None
+                    try:
+                        # Remove brackets and split by comma
+                        return [float(x) for x in embedding_str.strip('[]').split(',')]
+                    except ValueError:
+                        logger.debug(f"Could not parse embedding string: {embedding_str}")
+                        return None
+                
+                gdf['vector_embedding'] = gdf['vector_embedding'].apply(parse_embedding_str)
+                # Log how many were successfully parsed vs None
+                parsed_count = gdf['vector_embedding'].count() # Counts non-None values
+                total_count = len(gdf['vector_embedding'])
+                logger.info(f"Successfully parsed {parsed_count}/{total_count} vector embeddings.")
+
         # Ensure 'id' column exists and handle potential empty results
         if 'id' not in gdf.columns and not gdf.empty:
              logger.warning("Loaded erratics GeoDataFrame is missing 'id' column.")
@@ -424,7 +451,8 @@ def update_erratic_analysis_data(erratic_id: int, data: Dict) -> bool:
                 'nearest_road_dist', 'nearest_colonial_road_dist',
                 'nearest_native_territory_dist', 'elevation_category',
                 'geological_type', 'estimated_displacement_dist',
-                'vector_embedding', 'vector_embedding_data'
+                'vector_embedding',
+                'ruggedness_tri', 'terrain_landform', 'terrain_slope_position' # Added terrain fields
             ]
             
             update_values = {}
@@ -439,47 +467,65 @@ def update_erratic_analysis_data(erratic_id: int, data: Dict) -> bool:
             # Add erraticId to the values for insertion
             update_values['erraticId'] = erratic_id
 
-            # Prepare for UPSERT
-            columns = update_values.keys()
-            placeholders = [f"%({col})s" for col in columns]
+            # First, check if the record already exists
+            cursor.execute('SELECT 1 FROM "ErraticAnalyses" WHERE "erraticId" = %s', [erratic_id])
+            record_exists = cursor.fetchone() is not None
             
-            set_clauses = []
-            for col in columns:
-                if col != 'erraticId': # Don't try to update the PK itself in the SET part
-                    set_clauses.append(f'"{col}" = EXCLUDED."{col}"')
-            
-            # Include updatedAt timestamp
-            if 'updatedAt' not in update_values:
-                update_values['updatedAt'] = 'NOW()' # Let PG handle this directly in query
-                # For INSERT, we need to ensure it's part of the columns and placeholders
-                # if it's not already handled by Sequelize's default value on the model/table.
-                # Assuming table has default for createdAt and auto-updates updatedAt.
-                # If not, this needs adjustment. For UPSERT, this is usually fine.
-
-            # For INSERT part, ensure all columns in update_values are listed
-            insert_columns_str = ", ".join([f'"{col}"' for col in update_values.keys()])
-            insert_values_str = ", ".join([f"%({col})s" for col in update_values.keys()])
-
-            # For UPDATE part (conflict)
-            update_set_str = ", ".join(set_clauses)
-            if 'updatedAt' not in [col for col in columns if col != 'erraticId']:
-                 update_set_str += ", \"updatedAt\" = NOW()"
-            else: # if updatedAt was explicitly in update_values
-                 # it's already in set_clauses, but ensure it's EXCLUDED.updatedAt if needed
-                 pass 
-
-            sql = f"""
-            INSERT INTO "ErraticAnalyses" ({insert_columns_str})
-            VALUES ({insert_values_str})
-            ON CONFLICT ("erraticId") DO UPDATE
-            SET {update_set_str};
-            """
-            
-            # psycopg2 uses %(key)s for named placeholders in execute method
-            cursor.execute(sql, update_values)
-            conn.commit()
-            logger.info(f"Successfully upserted analysis data for erratic_id: {erratic_id}")
-            return True
+            if record_exists:
+                # UPDATE existing record approach
+                set_clauses = []
+                for col, value in update_values.items():
+                    if col != 'erraticId':  # Don't include the PK in SET clause
+                        set_clauses.append(f'"{col}" = %s')
+                
+                # Add updatedAt
+                set_clauses.append('"updatedAt" = NOW()')
+                
+                # Build the UPDATE statement
+                update_sql = f"""
+                UPDATE "ErraticAnalyses" 
+                SET {', '.join(set_clauses)}
+                WHERE "erraticId" = %s
+                """
+                
+                # Prepare values for the query: first the SET values, then the WHERE value
+                query_values = [value for col, value in update_values.items() if col != 'erraticId']
+                query_values.append(erratic_id)  # WHERE value
+                
+                cursor.execute(update_sql, query_values)
+                conn.commit()
+                logger.info(f"Successfully updated analysis data for erratic_id: {erratic_id}")
+                return True
+            else:
+                # INSERT new record approach - explicitly include timestamps
+                # Build INSERT statement with properly quoted column names
+                columns = []
+                placeholders = []
+                query_values = []
+                
+                # Add all fields from update_values except timestamps
+                for col, value in update_values.items():
+                    if col not in ['createdAt', 'updatedAt']:
+                        columns.append(f'"{col}"')
+                        placeholders.append('%s')
+                        query_values.append(value)
+                
+                # Add timestamp columns with NOW() function
+                columns.append('"createdAt"')
+                placeholders.append('NOW()')
+                
+                columns.append('"updatedAt"')
+                placeholders.append('NOW()')
+                
+                insert_sql = f"""
+                INSERT INTO "ErraticAnalyses" ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                """
+                
+                cursor.execute(insert_sql, query_values)
+                conn.commit()
+                logger.info(f"Successfully inserted analysis data for erratic_id: {erratic_id}")
+                return True
     except Exception as e:
         logger.error(f"Error upserting analysis data for erratic_id {erratic_id}: {e}")
         if conn:
@@ -933,8 +979,9 @@ def load_colonial_settlements() -> gpd.GeoDataFrame:
         return cached_gdf
 
     logger.info("Attempting to load colonial settlements from NHGIS data.")
-    target_dir = download_and_extract_data(data_key) # Downloads and extracts the zip
-    
+    # Ensure force_download can be passed if needed for debugging/updates, though not directly exposed by this func
+    target_dir = download_and_extract_data(data_key, force_download=False) 
+
     if not target_dir:
         logger.warning("Failed to download or extract NHGIS data. Using fallback colonial settlement data.")
         fallback_gdf = _create_fallback_colonial_settlements()
@@ -946,18 +993,52 @@ def load_colonial_settlements() -> gpd.GeoDataFrame:
     # NHGIS files for places often contain '_place_' in their names.
     # This is an educated guess; the user might need to specify a more exact file/pattern.
     settlement_shapefile = None
+    found_shapefiles = []
+    # Keywords to help identify relevant shapefiles for historical settlements/places
+    # Order can imply preference if multiple keywords match different files.
+    search_keywords = [
+        '_place', '_places', '_settlements', '_towns', '_cities', '_populated_places',
+        '_nhgis_place', '_historical_place', # More specific NHGIS guesses
+        'cntya_historical', # County subdivisions might sometimes represent settlements
+        'placept' # Common for point representations of places
+    ]
+
+    shapefiles_by_keyword = {key: [] for key in search_keywords}
+
     for root, _, files in os.walk(target_dir):
         for file in files:
-            # Prioritize files that seem to represent point data for places/settlements
-            if file.endswith('.shp') and ('_place_' in file.lower() or 'places' in file.lower() or 'settlements' in file.lower()):
-                settlement_shapefile = os.path.join(root, file)
-                logger.info(f"Found potential NHGIS settlement shapefile: {settlement_shapefile}")
-                break  # Use the first one found
-        if settlement_shapefile:
-            break
-            
+            if file.endswith('.shp'):
+                filepath = os.path.join(root, file)
+                found_shapefiles.append(filepath)
+                for keyword in search_keywords:
+                    if keyword in file.lower():
+                        shapefiles_by_keyword[keyword].append(filepath)
+                        # No break here, a file might match multiple keywords, log all matches
+    
+    # Select the best candidate shapefile based on keyword priority
+    for keyword in search_keywords:
+        if shapefiles_by_keyword[keyword]:
+            # Prefer shorter filenames if multiple match the same keyword, as they are often less specific (e.g. state-level)
+            # but for place data, often specific is better. Let's take the first one found for now.
+            settlement_shapefile = shapefiles_by_keyword[keyword][0] 
+            logger.info(f"Selected NHGIS settlement shapefile based on keyword '{keyword}': {settlement_shapefile}")
+            if len(shapefiles_by_keyword[keyword]) > 1:
+                logger.info(f"  Other files matching '{keyword}': {shapefiles_by_keyword[keyword][1:]}")
+            break 
+
+    if not settlement_shapefile and found_shapefiles:
+        # If no keyword match, but other shapefiles exist, pick the first one as a last resort
+        # This is less ideal and might require manual user intervention/config later
+        settlement_shapefile = found_shapefiles[0]
+        logger.warning(f"No keyword-specific settlement shapefile found. Using first available shapefile as a guess: {settlement_shapefile}")
+
     if not settlement_shapefile:
-        logger.warning(f"No suitable settlement shapefile (e.g., containing '_place_') found in NHGIS data at {target_dir}. Using fallback.")
+        logger.warning(f"No suitable settlement shapefile found in NHGIS data at {target_dir}.")
+        if found_shapefiles:
+            logger.info(f"All found shapefiles in {target_dir}:\n" + "\n".join(found_shapefiles))
+        else:
+            logger.info(f"No shapefiles at all found in {target_dir}.")
+        logger.warning("Using fallback colonial settlement data.")
         fallback_gdf = _create_fallback_colonial_settlements()
         _cache_gdf(fallback_gdf.copy(), cache_filepath)
         return fallback_gdf
@@ -1108,7 +1189,7 @@ def load_colonial_roads() -> gpd.GeoDataFrame:
 
     logger.info(f"Attempting to download and load colonial roads data from source: {DATA_URLS[data_key]}")
     
-    download_target_dir = download_and_extract_data(data_key)
+    download_target_dir = download_and_extract_data(data_key, force_download=False)
     
     if not download_target_dir:
         logger.warning(f"Failed to download colonial roads data for key '{data_key}'. Using fallback.")

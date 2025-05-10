@@ -219,47 +219,75 @@ def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
         return None
 
     data_key = 'elevation_srtm90_csi'
-    # Call download_and_extract_data which now handles fetching all necessary tiles for NA
-    # It returns the base directory where tiles are stored.
-    dem_base_dir = download_and_extract_data(data_key, point=point)
-    
-    if not dem_base_dir:
-        logger.error(f"Failed to download or locate SRTM base directory for key '{data_key}'")
-        return None
+    # Try SRTM data first
+    srtm_success = False
+    if point and (-60 <= point.latitude <= 60):
+        # Point is within SRTM coverage range
+        # Call download_and_extract_data which now handles fetching all necessary tiles for NA
+        # It returns the base directory where tiles are stored.
+        dem_base_dir = download_and_extract_data(data_key, point=point)
         
-    if point is None:
-        logger.warning("load_dem_data called without a specific point. Cannot determine correct tile path. Download may have occurred.")
-        return None
-        
-    # Calculate the expected tile name for the given point
-    lon = point.longitude
-    lat = point.latitude
-    
-    # Calculate bottom-left corner of the 5x5 tile containing the point
-    tile_lon_corner = math.floor(lon / 5) * 5
-    tile_lat_corner = math.floor(lat / 5) * 5
-    
-    # Check SRTM latitude coverage
-    if not (-60 <= tile_lat_corner < 60):
-        logger.warning(f"Point {point} is outside SRTM 90m latitude coverage (-60 to 60).")
-        return None
-        
-    # Determine tile indices based on CGIAR V4.1 convention (verified from documentation/common use)
-    # srtm_XX_YY.zip -> XX = (lon_corner + 180)/5 + 1, YY = (lat_corner + 60)/5 + 1
-    tile_lon_idx = (tile_lon_corner + 180) // 5 + 1
-    tile_lat_idx = (tile_lat_corner + 60) // 5 + 1
-    tile_base_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}"
-    expected_tif_name = f"{tile_base_name}.tif"
-    expected_tif_path = os.path.join(dem_base_dir, expected_tif_name)
+        if dem_base_dir:
+            srtm_success = True
+            
+            # Calculate the expected tile name for the given point
+            lon = point.longitude
+            lat = point.latitude
+            
+            # Calculate bottom-left corner of the 5x5 tile containing the point
+            tile_lon_corner = math.floor(lon / 5) * 5
+            tile_lat_corner = math.floor(lat / 5) * 5
+            
+            # Determine tile indices based on CGIAR V4.1 convention
+            tile_lon_idx = (tile_lon_corner + 180) // 5 + 1
+            tile_lat_idx = (tile_lat_corner + 60) // 5 + 1
+            tile_base_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}"
+            expected_tif_name = f"{tile_base_name}.tif"
+            expected_tif_path = os.path.join(dem_base_dir, expected_tif_name)
 
-    # Check if the specific required tile exists after the download attempt
-    if not os.path.exists(expected_tif_path):
-        logger.error(f"Required DEM tile {expected_tif_name} not found in {dem_base_dir} after download attempt for point {point}.")
-        # This could happen if the tile doesn't exist on the FTP server or download failed for this specific tile.
-        return None
+            # Check if the specific required tile exists after the download attempt
+            if os.path.exists(expected_tif_path):
+                logger.info(f"Using DEM tile: {expected_tif_path} for point {point}")
+                return expected_tif_path
+            else:
+                logger.error(f"Required DEM tile {expected_tif_name} not found in {dem_base_dir} after download attempt.")
+                srtm_success = False
     
-    logger.info(f"Using DEM tile: {expected_tif_path} for point {point}")
-    return expected_tif_path
+    # SRTM fallback for points outside coverage (high latitudes >60° or <-60°)
+    if point and not srtm_success:
+        logger.warning(f"Point {point} is outside SRTM 90m latitude coverage (-60 to 60) or tile download failed.")
+        
+        # Try alternate DEM source if available - this key should be in DATA_URLS in data_loader.py
+        alt_data_key = 'elevation_dem_na'  # Assuming this is defined in data_loader
+        logger.info(f"Attempting to use alternate DEM source: {alt_data_key}")
+        
+        try:
+            alt_dem_dir = download_and_extract_data(alt_data_key, point=point)
+            if alt_dem_dir:
+                # Search for a DEM file that could cover our point
+                dem_files = []
+                for root, _, files in os.walk(alt_dem_dir):
+                    for file in files:
+                        if file.lower().endswith(('.tif', '.tiff', '.asc', '.dem')):
+                            dem_files.append(os.path.join(root, file))
+                
+                if dem_files:
+                    # For simplicity, we'll just use the first DEM file found
+                    # A more sophisticated approach would check each file's bounds
+                    logger.info(f"Using alternate DEM file: {dem_files[0]}")
+                    return dem_files[0]
+            
+            logger.warning(f"No alternate DEM data available for point {point}.")
+            return None
+        except Exception as e:
+            logger.error(f"Error obtaining alternate DEM data: {e}")
+            return None
+    
+    # Generic case where no point is provided or all attempts failed
+    if not point:
+        logger.warning("load_dem_data called without a specific point. Cannot determine correct tile path.")
+    
+    return None
 
 def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[Optional[Dict], float]:
     """

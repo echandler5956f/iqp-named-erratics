@@ -103,7 +103,52 @@ export const passesAllFilters = (erratic, activeFilters, filterDefinitions) => {
         }
         // If config.required is false (checkbox unchecked), this filter doesn't exclude anything
         break;
-      // --- END NEW FILTER LOGIC ---
+
+      case 'accessibility_score':
+        const minAccessibility = filter.config.min;
+        const maxAccessibility = filter.config.max;
+        const erraticAccessibility = erratic.accessibility_score;
+
+        if (erraticAccessibility === null || erraticAccessibility === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (minAccessibility !== null && typeof minAccessibility === 'number' && !isNaN(minAccessibility)) {
+          if (erraticAccessibility < minAccessibility) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (maxAccessibility !== null && typeof maxAccessibility === 'number' && !isNaN(maxAccessibility)) {
+          if (erraticAccessibility > maxAccessibility) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'terrain_landform':
+        const filterLandformType = filter.config.type?.trim().toLowerCase();
+        if (filterLandformType) {
+          if (!erratic.terrain_landform || erratic.terrain_landform.toLowerCase() !== filterLandformType) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'nearest_colonial_road_dist':
+        const maxDistColonialRoad = filter.config.maxDist;
+        const erraticDistColonialRoad = erratic.nearest_colonial_road_dist;
+
+        if (erraticDistColonialRoad === null || erraticDistColonialRoad === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (maxDistColonialRoad !== null && typeof maxDistColonialRoad === 'number' && !isNaN(maxDistColonialRoad)) {
+          if (erraticDistColonialRoad > maxDistColonialRoad) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
 
       default:
         console.warn(`Unknown filter type in passesAllFilters: ${filter.type}`);

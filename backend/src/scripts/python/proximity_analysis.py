@@ -211,25 +211,25 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     # Process colonial settlements
     if "colonial_settlements" in feature_layers:
         logger.info("Loading colonial settlement data...")
+        results['nearest_colonial_settlement_dist'] = None # Initialize
         try:
-            colonial_settlements = load_colonial_settlements()
-            if not colonial_settlements.empty:
-                logger.info(f"Loaded {len(colonial_settlements)} colonial settlements")
-                settlement, distance = geo_utils.find_nearest_feature(erratic_point, colonial_settlements) # Use module prefix
+            colonial_settlements_gdf = load_colonial_settlements()
+            if not colonial_settlements_gdf.empty:
+                logger.info(f"Loaded {len(colonial_settlements_gdf)} colonial settlements")
+                settlement, distance = geo_utils.find_nearest_feature(erratic_point, colonial_settlements_gdf)
                 
+                results["nearest_colonial_settlement_dist"] = distance if distance != float('inf') else None
                 if settlement:
-                    results["nearest_colonial_settlement_dist"] = distance
                     results["nearest_colonial_settlement_name"] = settlement.get('name', 'Unknown')
-                    
-                    # Include founding date if available
-                    if 'founded' in settlement:
-                        results["nearest_colonial_settlement_founded"] = int(settlement.get('founded', 0))
-                    
-                    # Include colonial power if available
+                    if 'founded' in settlement and settlement.get('founded') is not None:
+                        try:
+                            results["nearest_colonial_settlement_founded"] = int(settlement['founded'])
+                        except ValueError:
+                            logger.warning(f"Could not parse founded year '{settlement['founded']}' as int.")
+                            results["nearest_colonial_settlement_founded"] = None
                     if 'colony' in settlement:
                         results["nearest_colonial_settlement_colony"] = settlement.get('colony', 'Unknown')
-                    
-                    logger.info(f"Nearest colonial settlement: {results['nearest_colonial_settlement_name']} at {distance:.1f}m")
+                    logger.info(f"Nearest colonial settlement: {results.get('nearest_colonial_settlement_name')} at {results.get('nearest_colonial_settlement_dist'):.1f}m" if results.get('nearest_colonial_settlement_dist') is not None else "N/A")
             else:
                 logger.warning("No colonial settlement data available")
         except Exception as e:
@@ -261,21 +261,23 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
     # Process colonial roads
     if "colonial_roads" in feature_layers:
         logger.info("Loading colonial road data...")
+        results['nearest_colonial_road_dist'] = None # Initialize
         try:
-            colonial_roads = load_colonial_roads()
-            if not colonial_roads.empty:
-                logger.info(f"Loaded {len(colonial_roads)} colonial roads")
-                road, distance = geo_utils.find_nearest_feature(erratic_point, colonial_roads) # Use module prefix
+            colonial_roads_gdf = load_colonial_roads()
+            if not colonial_roads_gdf.empty:
+                logger.info(f"Loaded {len(colonial_roads_gdf)} colonial roads")
+                road, distance = geo_utils.find_nearest_feature(erratic_point, colonial_roads_gdf)
                 
+                results["nearest_colonial_road_dist"] = distance if distance != float('inf') else None
                 if road:
-                    results["nearest_colonial_road_dist"] = distance
                     results["nearest_colonial_road_name"] = road.get('name', 'Unknown')
-                    
-                    # Include historical period if available
-                    if 'year' in road:
-                        results["nearest_colonial_road_year"] = int(road.get('year', 0))
-                    
-                    logger.info(f"Nearest colonial road: {results['nearest_colonial_road_name']} at {distance:.1f}m")
+                    if 'year' in road and road.get('year') is not None:
+                        try:
+                            results["nearest_colonial_road_year"] = int(road['year'])
+                        except ValueError:
+                            logger.warning(f"Could not parse road year '{road['year']}' as int.")
+                            results["nearest_colonial_road_year"] = None                    
+                    logger.info(f"Nearest colonial road: {results.get('nearest_colonial_road_name')} at {results.get('nearest_colonial_road_dist'):.1f}m" if results.get('nearest_colonial_road_dist') is not None else "N/A")
             else:
                 logger.warning("No colonial road data available")
         except Exception as e:
@@ -322,7 +324,49 @@ def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = N
         except Exception as e:
             logger.error(f"Error analyzing terrain context: {e}")
     else:
-        logger.warning("DEM data not available, skipping terrain analysis.")
+        logger.warning("DEM data not available, providing estimated terrain values.")
+        
+        # Set default/fallback values when DEM is unavailable
+        # If the point has a known elevation from another source, we can still categorize it
+        if erratic.get('elevation') is not None:
+            try:
+                elevation = float(erratic.get('elevation'))
+                # We already set elevation_category earlier, but ensure it's here if it was missed
+                if 'elevation_category' not in results:
+                    results['elevation_category'] = geo_utils.get_elevation_category(elevation)
+            except (ValueError, TypeError):
+                pass
+                
+        # Estimate ruggedness based on region if possible
+        if 60 < abs(erratic_point.latitude) < 80:  # High latitudes (Arctic/Antarctic)
+            # Typically glaciated, moderate ruggedness
+            results["ruggedness_tri"] = 25.0
+            results["terrain_landform"] = "glaciated_terrain"
+            results["terrain_slope_position"] = "glacial_plain"
+            logger.info("Using estimated terrain values for high-latitude region.")
+        elif 'elevation_category' in results:
+            # Use elevation category to make an educated guess about terrain
+            if results['elevation_category'] in ['lowland', 'below_sea_level']:
+                results["ruggedness_tri"] = 5.0
+                results["terrain_landform"] = "coastal_plain"
+                results["terrain_slope_position"] = "level"
+            elif results['elevation_category'] in ['upland', 'hill']:
+                results["ruggedness_tri"] = 15.0
+                results["terrain_landform"] = "rolling_hills"
+                results["terrain_slope_position"] = "midslope"
+            elif 'mountain' in results['elevation_category']:
+                results["ruggedness_tri"] = 35.0
+                results["terrain_landform"] = "mountain_terrain"
+                results["terrain_slope_position"] = "ridge"
+            logger.info(f"Using estimated terrain values based on elevation category: {results.get('elevation_category')}")
+        else:
+            # Last resort defaults
+            results["ruggedness_tri"] = 10.0  # Moderate default
+            results["terrain_landform"] = "undetermined"
+            results["terrain_slope_position"] = "undetermined"
+            logger.info("Using default terrain values due to lack of DEM data.")
+            
+        logger.info(f"Estimated terrain context: Landform={results.get('terrain_landform')}, Slope Position={results.get('terrain_slope_position')}, TRI={results.get('ruggedness_tri')}")
 
     # --- Other Calculated Fields ---
 

@@ -14,6 +14,7 @@ class PythonService {
    * @returns {Promise<object>} - JSON result from the script
    */
   async runScript(scriptName, args = []) {
+    console.log(`[PythonService] runScript called for script: ${scriptName} with args: ${args.join(' ')}`);
     // Build full path to the script
     const scriptPath = path.join(__dirname, '..', 'scripts', 'python', scriptName);
     
@@ -51,12 +52,14 @@ class PythonService {
     
     // Build the command
     const command = `${pythonCommand} ${scriptPath} ${args.join(' ')}`;
+    console.log(`[PythonService] Executing command: ${command}`);
     
     // Execute the command
     return new Promise((resolve, reject) => {
       exec(command, (error, stdout, stderr) => {
+        console.log(`[PythonService] exec callback for ${scriptName}. Error: ${error}, stdout length: ${stdout?.length}, stderr length: ${stderr?.length}`);
         if (error) {
-          console.error(`Error executing Python script: ${error.message}`);
+          console.error(`[PythonService] Error executing Python script: ${error.message}`);
           console.error(`Command: ${command}`);
           if (stderr) console.error(`stderr: ${stderr}`);
           reject(error);
@@ -74,7 +77,9 @@ class PythonService {
         } catch (parseError) {
           console.error('Failed to parse Python script output as JSON:', parseError);
           console.error('Raw output:', stdout);
-          reject(new Error('Invalid output format from Python script'));
+          // Include stderr in the error if available, as it might contain Python tracebacks
+          const errorMessage = `Invalid output format from Python script. stderr: ${stderr || 'N/A'}`;
+          reject(new Error(errorMessage));
         }
       });
     });
@@ -106,6 +111,7 @@ class PythonService {
    * @returns {Promise<object>} - Analysis results
    */
   async runProximityAnalysis(erraticId, featureLayers = [], updateDb = false) {
+    console.log(`[PythonService] runProximityAnalysis called for ID: ${erraticId}`);
     // Build arguments
     const args = [erraticId.toString()];
     
@@ -136,6 +142,50 @@ class PythonService {
     }
     
     // Run the script
+    return this.runScript('classify_erratic.py', args);
+  }
+
+  /**
+   * Run clustering analysis on erratics
+   * @param {string} algorithm - Clustering algorithm to use (e.g., 'dbscan', 'kmeans', 'hierarchical')
+   * @param {Array<string>} [featuresToCluster=[]] - Features to use for clustering (e.g., ['latitude', 'longitude'])
+   * @param {object} [algoParams={}] - Algorithm-specific parameters (e.g., { eps: 0.5, min_samples: 5 })
+   * @param {boolean} [outputToFile=false] - Whether to output results to a file
+   * @param {string} [outputFilename='clustering_results.json'] - Filename for output
+   * @returns {Promise<object>} - Clustering results
+   */
+  async runClusteringAnalysis(algorithm, featuresToCluster = [], algoParams = {}, outputToFile = false, outputFilename = 'clustering_results.json') {
+    const args = ['--algorithm', algorithm];
+
+    if (featuresToCluster.length > 0) {
+      args.push('--features', ...featuresToCluster);
+    }
+
+    if (Object.keys(algoParams).length > 0) {
+      args.push('--algo_params', JSON.stringify(algoParams));
+    }
+    
+    if (outputToFile) {
+      args.push('--output', outputFilename);
+    }
+
+    return this.runScript('clustering.py', args);
+  }
+
+  /**
+   * Trigger the building of topic models.
+   * @param {string} [outputPath='build_topics_result.json'] - Path to save the output/log of the build process.
+   * @returns {Promise<object>} - Result from the script (usually a log or status message).
+   */
+  async runBuildTopicModels(outputPath = 'build_topics_result.json') {
+    // The script expects an erratic_id, but it's not used for --build-topics. Use a placeholder.
+    const placeholderErraticId = '1'; 
+    const args = [
+      placeholderErraticId,
+      '--build-topics',
+      '--output', outputPath
+    ];
+    
     return this.runScript('classify_erratic.py', args);
   }
 }

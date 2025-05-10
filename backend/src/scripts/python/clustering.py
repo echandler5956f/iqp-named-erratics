@@ -31,9 +31,11 @@ from python.utils.data_loader import load_erratics, json_to_file
 
 # --- DBSCAN Clustering ---
 
-def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Optional[float] = None, min_samples: int = 3) -> typing.Dict:
+def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Optional[float] = None, 
+                              min_samples: int = 3, features: typing.Optional[typing.List[str]] = None,
+                              metric: str = 'auto') -> typing.Dict:
     """
-    Performs DBSCAN clustering on erratic coordinates.
+    Performs DBSCAN clustering on erratic coordinates or other features.
     Automatically estimates eps if not provided.
 
     Args:
@@ -41,12 +43,19 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
         eps: The maximum distance between samples for one to be considered as in the neighborhood of the other. 
              If None, it will be estimated using the k-distance graph.
         min_samples: The number of samples in a neighborhood for a point to be considered as a core point.
+        features: List of column names to use for clustering. If None, uses geographic coordinates.
+                 Special handling for 'vector_embedding' which is expected to be a list/array column.
+        metric: Distance metric to use. 'auto' chooses based on features:
+               - 'haversine' for geographic coordinates (default when features=None)
+               - 'euclidean' for scalar features
+               - 'cosine' for vector embeddings
 
     Returns:
         Dictionary containing cluster assignments and metrics.
           {
               "algorithm": "DBSCAN",
-              "params": {"eps": calculated_eps, "min_samples": min_samples},
+              "params": {"eps": calculated_eps, "min_samples": min_samples, 
+                         "features": features, "metric": metric},
               "num_clusters": count,
               "num_noise_points": count,
               "assignments": {erratic_id: cluster_label (-1 for noise), ...},
@@ -56,7 +65,11 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
     logger.info(f"Performing DBSCAN clustering (min_samples={min_samples}, eps={eps or 'auto'})...")
     results = {
         "algorithm": "DBSCAN",
-        "params": {"min_samples": min_samples},
+        "params": {
+            "min_samples": min_samples,
+            "features": features,
+            "metric": metric
+        },
         "assignments": {},
         "num_clusters": 0,
         "num_noise_points": 0,
@@ -71,23 +84,114 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
     try:
         from sklearn.cluster import DBSCAN
         from sklearn.neighbors import NearestNeighbors
+        from sklearn.preprocessing import StandardScaler
     except ImportError:
         logger.error("scikit-learn is required for DBSCAN clustering.")
         results["error"] = "scikit-learn not installed"
         return results
 
-    # Access active geometry column directly and extract coordinates
-    coords = np.radians(erratics_gdf.geometry.apply(lambda p: (p.y, p.x)).tolist()) # Lat, Lon in radians
+    # Determine what features to use and prepare data accordingly
+    using_geographic_coords = False
+    using_vector_embedding = False
+    data_for_clustering = None
+    effective_metric = metric
 
+    # Default to geographic coordinates if no features specified
+    if features is None or (len(features) == 2 and 
+                            ('longitude' in features or 'lat' in features or 
+                             'latitude' in features or 'lon' in features)):
+        # Use geographic coordinates with Haversine distance
+        using_geographic_coords = True
+        logger.info("Using geographic coordinates for clustering.")
+        coords = np.radians(erratics_gdf.geometry.apply(lambda p: (p.y, p.x)).tolist())  # Lat, Lon in radians
+        data_for_clustering = coords
+        
+        # Override metric to haversine for geographic coordinates
+        if metric == 'auto':
+            effective_metric = 'haversine'
+            results["params"]["metric"] = effective_metric
+        elif metric != 'haversine':
+            logger.warning(f"Using '{metric}' metric with geographic coordinates. 'haversine' is recommended.")
+            
+    elif 'vector_embedding' in features and len(features) == 1:
+        # Special handling for vector embeddings
+        using_vector_embedding = True
+        logger.info("Using vector_embedding for clustering.")
+        
+        # Extract embeddings 
+        embeddings = erratics_gdf['vector_embedding'].dropna().tolist()
+        if not embeddings:
+            logger.error("No valid vector embeddings found in data.")
+            results["error"] = "No valid vector embeddings"
+            return results
+            
+        # Convert list of embeddings to 2D numpy array
+        try:
+            data_for_clustering = np.array(embeddings)
+            if len(data_for_clustering) < min_samples:
+                logger.warning(f"Only {len(data_for_clustering)} erratics have valid embeddings (min_samples={min_samples}).")
+                results["error"] = "Insufficient data points with valid embeddings"
+                return results
+                
+            # Keep track of which rows in original df have valid embeddings for later ID mapping
+            valid_indices = erratics_gdf['vector_embedding'].dropna().index
+            valid_ids = erratics_gdf.loc[valid_indices, 'id']
+            
+            # Override metric to cosine for embeddings
+            if metric == 'auto':
+                effective_metric = 'cosine'
+                results["params"]["metric"] = effective_metric
+                
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error preparing vector embeddings for clustering: {e}")
+            results["error"] = f"Vector embedding preparation failed: {e}"
+            return results
+    else:
+        # Regular feature columns
+        logger.info(f"Using features {features} for clustering.")
+        try:
+            # Check all features exist in DataFrame
+            missing = [f for f in features if f not in erratics_gdf.columns]
+            if missing:
+                raise KeyError(f"Features not found in erratic data: {missing}")
+                
+            # Extract features, drop rows with any NaN
+            data_df = erratics_gdf[features].copy()
+            data_df.dropna(inplace=True)
+            if len(data_df) < min_samples:
+                logger.warning(f"Only {len(data_df)} erratics have valid values for all required features.")
+                results["error"] = "Insufficient data points with valid features"
+                return results
+                
+            # Keep track of valid indices for ID mapping
+            valid_indices = data_df.index
+            valid_ids = erratics_gdf.loc[valid_indices, 'id']
+            
+            # Scale features
+            scaler = StandardScaler()
+            data_for_clustering = scaler.fit_transform(data_df)
+            
+            # Set metric to euclidean if auto
+            if metric == 'auto':
+                effective_metric = 'euclidean'
+                results["params"]["metric"] = effective_metric
+                
+        except Exception as e:
+            logger.error(f"Error preparing features for clustering: {e}")
+            results["error"] = f"Feature preparation failed: {e}"
+            return results
+
+    # Estimate eps if not provided
     calculated_eps = eps
     if calculated_eps is None:
-        # Estimate eps using k-distance graph (k=min_samples)
-        k = min_samples * 2 # Factor used by NearestNeighbors often relates to min_samples
+        # Estimate eps using k-distance graph
+        k = min_samples * 2 # Factor used by NearestNeighbors 
         try:
             logger.info(f"Estimating eps using k-distance graph (k={k})...")
-            nn = NearestNeighbors(n_neighbors=k, metric='haversine')
-            nn.fit(coords)
-            distances, _ = nn.kneighbors(coords)
+            nn = NearestNeighbors(n_neighbors=k, metric=effective_metric)
+            nn.fit(data_for_clustering)
+            distances, _ = nn.kneighbors(data_for_clustering)
+            
             # Get the distance to the k-th nearest neighbor for each point
             k_distances = np.sort(distances[:, -1]) 
             
@@ -97,31 +201,42 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
                 knee = KneeLocator(range(len(k_distances)), k_distances, curve='convex', direction='increasing')
                 if knee.knee:
                     calculated_eps = k_distances[knee.knee]
-                    logger.info(f"Estimated eps (knee point): {calculated_eps:.5f} radians")
+                    logger.info(f"Estimated eps (knee point): {calculated_eps:.5f}")
                 else: # Fallback if knee not found
                      # Use a percentile (e.g., 95th) or median as fallback heuristic
                      calculated_eps = np.percentile(k_distances, 90)
-                     logger.info(f"Knee point not found, using 90th percentile eps: {calculated_eps:.5f} radians")
+                     logger.info(f"Knee point not found, using 90th percentile eps: {calculated_eps:.5f}")
 
             except ImportError:
                  # Option 2: Fallback heuristic if kneed not available (e.g., median or percentile)
                  calculated_eps = np.percentile(k_distances, 90) 
                  logger.warning("kneed library not found for optimal eps estimation. Using 90th percentile heuristic.")
-                 logger.info(f"Estimated eps (90th percentile): {calculated_eps:.5f} radians")
+                 logger.info(f"Estimated eps (90th percentile): {calculated_eps:.5f}")
 
         except Exception as e:
             logger.error(f"Error estimating eps: {e}. Using default heuristic value.")
             # Provide a very rough default based on typical coordinate ranges if estimation fails
-            calculated_eps = 0.01 # Radians, adjust based on expected data density
+            if using_geographic_coords:
+                calculated_eps = 0.01 # Radians, adjust based on expected data density
+            elif using_vector_embedding and effective_metric == 'cosine':
+                calculated_eps = 0.2  # Cosine distance range is 0-2
+            else:
+                calculated_eps = 0.5  # Generic default for standardized features
 
     results["params"]["eps"] = calculated_eps
     
     # Apply DBSCAN
     try:
-        db = DBSCAN(eps=calculated_eps, min_samples=min_samples, metric='haversine')
-        cluster_labels = db.fit_predict(coords)
+        db = DBSCAN(eps=calculated_eps, min_samples=min_samples, metric=effective_metric)
+        cluster_labels = db.fit_predict(data_for_clustering)
         
-        results["assignments"] = {int(erratics_gdf.iloc[i]['id']): int(label) for i, label in enumerate(cluster_labels)}
+        # Map cluster labels to erratic IDs
+        if using_geographic_coords:
+            # All rows were used
+            results["assignments"] = {int(erratics_gdf.iloc[i]['id']): int(label) for i, label in enumerate(cluster_labels)}
+        else:
+            # Only rows with valid features were used
+            results["assignments"] = {int(valid_ids.iloc[i]): int(label) for i, label in enumerate(cluster_labels)}
         
         # Calculate metrics
         unique_labels = set(cluster_labels)
@@ -131,14 +246,20 @@ def perform_dbscan_clustering(erratics_gdf: gpd.GeoDataFrame, eps: typing.Option
         logger.info(f"DBSCAN Result: Found {results['num_clusters']} clusters and {results['num_noise_points']} noise points.")
 
         # Calculate silhouette score if more than 1 cluster and fewer than n-1 points are noise
-        n_samples = len(coords)
-        if results["num_clusters"] > 1 and results["num_clusters"] < (n_samples - 1):
-             # Need to exclude noise points for silhouette calculation if metric allows
-             # sklearn's silhouette_score handles labels directly
+        n_samples = len(data_for_clustering)
+        if results["num_clusters"] > 1 and n_samples - results["num_noise_points"] > results["num_clusters"]:
+             # Need to exclude noise points for silhouette calculation
              try:
-                 score = silhouette_score(coords, cluster_labels, metric='haversine')
-                 results["silhouette_score"] = float(score)
-                 logger.info(f"Silhouette Score: {score:.3f}")
+                 # Filter out noise points (-1 labels)
+                 non_noise_mask = cluster_labels != -1
+                 if np.sum(non_noise_mask) > results["num_clusters"]:  # Need more points than clusters
+                     score = silhouette_score(
+                         data_for_clustering[non_noise_mask], 
+                         cluster_labels[non_noise_mask],
+                         metric=effective_metric
+                     )
+                     results["silhouette_score"] = float(score)
+                     logger.info(f"Silhouette Score: {score:.3f}")
              except ValueError as sil_err:
                   logger.warning(f"Could not calculate silhouette score: {sil_err}")
              except Exception as e:
@@ -199,39 +320,57 @@ def perform_kmeans_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: int = 
         # Check if geometry-based features are requested
         use_geom_x = 'longitude' in features
         use_geom_y = 'latitude' in features
-        other_features = [f for f in features if f not in ['longitude', 'latitude']]
+        is_vector_embedding_feature = features == ['vector_embedding']
+        other_features = [f for f in features if f not in ['longitude', 'latitude', 'vector_embedding']]
 
         data_frames_to_concat = []
-        if use_geom_x:
-            data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
-        if use_geom_y:
-            data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
-        if other_features:
-            # Check if other requested features exist
-            missing_features = [f for f in other_features if f not in erratics_gdf.columns]
-            if missing_features:
-                raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
-            data_frames_to_concat.append(erratics_gdf[other_features])
+        ids_for_clustering = erratics_gdf['id'] # Default to all IDs
+        data_for_clustering_df = None
 
-        if not data_frames_to_concat:
-             raise ValueError("No valid features selected for clustering.")
-             
-        data_for_clustering = pd.concat(data_frames_to_concat, axis=1)
+        if is_vector_embedding_feature:
+            logger.info("Using vector_embedding for K-Means clustering.")
+            embeddings = erratics_gdf['vector_embedding'].dropna().tolist()
+            if not embeddings or len(embeddings) < n_clusters:
+                logger.error("Not enough valid vector embeddings for K-Means.")
+                results["error"] = "Insufficient data points with valid embeddings"
+                return results
+            
+            data_for_clustering_np = np.array(embeddings)
+            valid_indices = erratics_gdf['vector_embedding'].dropna().index
+            ids_for_clustering = erratics_gdf.loc[valid_indices, 'id']
+            # K-Means typically uses Euclidean distance, scaling might still be beneficial for some embeddings
+            # but for sentence transformers like all-MiniLM-L6-v2, they are often normalized to unit length,
+            # making Euclidean distance related to cosine similarity. We'll scale by default.
+            scaler = StandardScaler(with_mean=False) # Often embeddings are not mean-centered for scaling
+            scaled_data = scaler.fit_transform(data_for_clustering_np)
+        else:
+            if use_geom_x:
+                data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
+            if use_geom_y:
+                data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
+            if other_features:
+                missing_features = [f for f in other_features if f not in erratics_gdf.columns]
+                if missing_features:
+                    raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
+                data_frames_to_concat.append(erratics_gdf[other_features])
 
-        # Reorder columns to match requested feature order if necessary
-        data_for_clustering = data_for_clustering[features]
-       
-        data_for_clustering.dropna(inplace=True) # Drop rows with NaNs in selected/derived features
-        ids_for_clustering = erratics_gdf.loc[data_for_clustering.index, 'id']
+            if not data_frames_to_concat:
+                 raise ValueError("No valid features selected for K-Means clustering.")
+                 
+            data_for_clustering_df = pd.concat(data_frames_to_concat, axis=1)
+            data_for_clustering_df = data_for_clustering_df[features] # Reorder
+           
+            data_for_clustering_df.dropna(inplace=True) 
+            ids_for_clustering = erratics_gdf.loc[data_for_clustering_df.index, 'id']
 
-        if len(data_for_clustering) < n_clusters:
-             logger.warning(f"Not enough data points ({len(data_for_clustering)}) after handling NaNs for K-Means (k={n_clusters}).")
-             results["error"] = "Insufficient data points after NaN removal"
-             return results
+            if len(data_for_clustering_df) < n_clusters:
+                 logger.warning(f"Not enough data points ({len(data_for_clustering_df)}) after handling NaNs for K-Means (k={n_clusters}).")
+                 results["error"] = "Insufficient data points after NaN removal"
+                 return results
 
-        # Scale features
-        scaler = StandardScaler()
-        scaled_data = scaler.fit_transform(data_for_clustering)
+            scaler = StandardScaler()
+            scaled_data = scaler.fit_transform(data_for_clustering_df)
+
     except KeyError as e:
         logger.error(f"Feature column '{e}' not found in erratic data.")
         results["error"] = f"Missing feature column: {e}"
@@ -312,35 +451,83 @@ def perform_hierarchical_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: 
     try:
         use_geom_x = 'longitude' in features
         use_geom_y = 'latitude' in features
-        other_features = [f for f in features if f not in ['longitude', 'latitude']]
+        is_vector_embedding_feature = features == ['vector_embedding']
+        other_features = [f for f in features if f not in ['longitude', 'latitude', 'vector_embedding']]
 
         data_frames_to_concat = []
-        if use_geom_x:
-            data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
-        if use_geom_y:
-            data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
-        if other_features:
-            missing_features = [f for f in other_features if f not in erratics_gdf.columns]
-            if missing_features:
-                raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
-            data_frames_to_concat.append(erratics_gdf[other_features])
+        ids_for_clustering = erratics_gdf['id']
+        scaled_data = None
+        affinity = 'euclidean' # Default affinity
 
-        if not data_frames_to_concat:
-             raise ValueError("No valid features selected for clustering.")
-             
-        data_for_clustering = pd.concat(data_frames_to_concat, axis=1)
-        data_for_clustering = data_for_clustering[features] # Reorder
+        if is_vector_embedding_feature:
+            logger.info("Using vector_embedding for Hierarchical clustering.")
+            embeddings = erratics_gdf['vector_embedding'].dropna().tolist()
+            if not embeddings or len(embeddings) < n_clusters:
+                logger.error("Not enough valid vector embeddings for Hierarchical Clustering.")
+                results["error"] = "Insufficient data points with valid embeddings"
+                return results
+            
+            data_for_clustering_np = np.array(embeddings)
+            valid_indices = erratics_gdf['vector_embedding'].dropna().index
+            ids_for_clustering = erratics_gdf.loc[valid_indices, 'id']
+            
+            # For hierarchical clustering, especially with cosine-like distances on embeddings,
+            # using raw (but L2-normalized) embeddings directly with cosine affinity is common.
+            # If sentence transformer provides normalized embeddings, no further scaling is strictly needed for cosine.
+            # However, if linkage is 'ward', it requires euclidean.
+            if linkage == 'ward':
+                scaler = StandardScaler(with_mean=False) # Ward expects Euclidean, so scale like K-Means
+                scaled_data = scaler.fit_transform(data_for_clustering_np)
+                affinity = 'euclidean' 
+            else:
+                # For other linkages, if embeddings are normalized, cosine distance is good.
+                # The AgglomerativeClustering affinity parameter can take 'cosine'.
+                scaled_data = data_for_clustering_np # Use raw (hopefully normalized) embeddings
+                affinity = 'cosine' 
+            logger.info(f"Using affinity '{affinity}' for hierarchical clustering on embeddings.")
 
-        data_for_clustering.dropna(inplace=True)
-        ids_for_clustering = erratics_gdf.loc[data_for_clustering.index, 'id']
+        else: # Geographic or other numeric features
+            if use_geom_x:
+                data_frames_to_concat.append(erratics_gdf.geometry.x.rename('longitude'))
+            if use_geom_y:
+                data_frames_to_concat.append(erratics_gdf.geometry.y.rename('latitude'))
+            if other_features:
+                missing_features = [f for f in other_features if f not in erratics_gdf.columns]
+                if missing_features:
+                    raise KeyError(f"Missing feature columns required for clustering: {missing_features}")
+                data_frames_to_concat.append(erratics_gdf[other_features])
 
-        if len(data_for_clustering) < n_clusters:
-             logger.warning(f"Not enough data points ({len(data_for_clustering)}) after handling NaNs for Hierarchical Clustering (k={n_clusters}).")
-             results["error"] = "Insufficient data points after NaN removal"
-             return results
+            if not data_frames_to_concat:
+                 raise ValueError("No valid features selected for Hierarchical clustering.")
+                 
+            data_for_clustering_df = pd.concat(data_frames_to_concat, axis=1)
+            data_for_clustering_df = data_for_clustering_df[features] # Reorder
 
-        scaler = StandardScaler()
-        scaled_data = scaler.fit_transform(data_for_clustering)
+            data_for_clustering_df.dropna(inplace=True)
+            ids_for_clustering = erratics_gdf.loc[data_for_clustering_df.index, 'id']
+
+            if len(data_for_clustering_df) < n_clusters:
+                 logger.warning(f"Not enough data points ({len(data_for_clustering_df)}) after handling NaNs for Hierarchical Clustering (k={n_clusters}).")
+                 results["error"] = "Insufficient data points after NaN removal"
+                 return results
+
+            # Determine affinity for geographic or other features
+            if linkage != 'ward' and use_geom_x and use_geom_y and not other_features:
+                # Only lat/lon specified, not ward linkage, use haversine (requires radians)
+                coords_for_haversine = data_for_clustering_df[['latitude', 'longitude']].values
+                scaled_data = np.radians(coords_for_haversine)
+                affinity = 'haversine' 
+                logger.info("Using 'haversine' affinity for geographic coordinates.")
+            else:
+                # Default to Euclidean for Ward or mixed/other features
+                scaler = StandardScaler()
+                scaled_data = scaler.fit_transform(data_for_clustering_df)
+                affinity = 'euclidean'
+                if linkage != 'ward':
+                    logger.info("Using 'euclidean' affinity for mixed/other features or non-Ward linkage on scaled coordinates.")
+
+        results["params"]["affinity_used"] = affinity # Log the actual affinity used
+
     except KeyError as e:
         logger.error(f"Feature column '{e}' not found in erratic data.")
         results["error"] = f"Missing feature column: {e}"
@@ -352,20 +539,9 @@ def perform_hierarchical_clustering(erratics_gdf: gpd.GeoDataFrame, n_clusters: 
 
     # Apply Agglomerative Clustering
     try:
-        # For Ward linkage, affinity must be 'euclidean'
+        # For Ward linkage, affinity must be 'euclidean' (already handled in data prep)
         # Other linkages can use different affinities/distance metrics if needed
-        affinity = 'euclidean'
-        if linkage != 'ward' and 'latitude' in features: # Use haversine for geographic coords if not Ward
-             affinity = 'haversine' 
-             # Check if ONLY using geographic coordinates
-             if set(features) != {'longitude', 'latitude'}:
-                 logger.warning(f"Using euclidean distance for linkage '{linkage}' with mixed features. Consider feature engineering.")
-                 affinity = 'euclidean'
-             else:
-                 # Use radians for haversine
-                 # Ensure columns are in lat, lon order for haversine if using coords directly
-                 coords_for_haversine = data_for_clustering[['latitude', 'longitude']].values
-                 scaled_data = np.radians(coords_for_haversine) # Use radians directly for haversine
+        # The `affinity` variable is now set correctly based on feature type and linkage.
         
         model = AgglomerativeClustering(n_clusters=n_clusters, linkage=linkage, affinity=affinity)
         cluster_labels = model.fit_predict(scaled_data)
@@ -399,10 +575,12 @@ def main():
     # DBSCAN args
     parser.add_argument('--eps', type=float, help='DBSCAN: Epsilon parameter (distance). Auto-estimated if not provided.')
     parser.add_argument('--min_samples', type=int, default=3, help='DBSCAN: Minimum number of samples.')
+    parser.add_argument('--metric', type=str, default='auto', choices=['auto', 'haversine', 'euclidean', 'cosine'], 
+                        help='DBSCAN: Distance metric to use. "auto" selects based on features.')
     
     # K-Means / Hierarchical args
     parser.add_argument('--k', type=int, default=5, help='K-Means/Hierarchical: Number of clusters.')
-    parser.add_argument('--features', nargs='+', default=['longitude', 'latitude'], help='K-Means/Hierarchical: Features to use for clustering.')
+    parser.add_argument('--features', nargs='+', default=['longitude', 'latitude'], help='K-Means/Hierarchical/DBSCAN: Features to use for clustering.')
     parser.add_argument('--linkage', type=str, default='ward', choices=['ward', 'complete', 'average', 'single'], help='Hierarchical: Linkage criterion.')
 
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -426,7 +604,8 @@ def main():
         logger.error("No erratics data loaded. Cannot perform clustering.")
         results = {"error": "No erratic data available"}
     elif args.algorithm == 'dbscan':
-        results = perform_dbscan_clustering(erratics_gdf, eps=args.eps, min_samples=args.min_samples)
+        results = perform_dbscan_clustering(erratics_gdf, eps=args.eps, min_samples=args.min_samples, 
+                                            features=args.features, metric=args.metric)
     elif args.algorithm == 'kmeans':
         results = perform_kmeans_clustering(erratics_gdf, n_clusters=args.k, features=args.features)
     elif args.algorithm == 'hierarchical':
