@@ -22,3 +22,6 @@
 **/*.tfw
 **/*.tif
 **/*.env
+
+# Python NLTK data local cache
+backend/src/scripts/python/nltk_data_local/

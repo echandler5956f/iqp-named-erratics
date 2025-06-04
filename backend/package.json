@@ -10,7 +10,6 @@
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
     "db:migration:create": "npx sequelize-cli migration:generate --name",
-    "py:setup": "cd src/scripts/python && python setup_env.py",
     "spatial:install": "npm run db:migrate",
     "spatial:analyze": "echo 'Running spatial analysis on all erratics' && node src/scripts/runSpatialAnalysis.js"
   },

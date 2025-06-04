@@ -4,39 +4,42 @@ This directory contains the Python-based spatial analysis and machine learning c
 
 ## Environment Setup
 
-The spatial analysis tools require Python 3.10+ and a number of specialized libraries. Dependencies are managed via `requirements.txt`.
+The spatial analysis tools require a specific Python 3.10+ environment managed by Conda. All dependencies, including core libraries, NLP models (spaCy), and NLTK data, are installed and configured by a dedicated shell script.
 
-1.  **Create a Python Environment**: It's highly recommended to use a virtual environment (e.g., venv, conda).
-    ```bash
-    python -m venv .venv
-    source .venv/bin/activate # On Windows: .venv\Scripts\activate
-    ```
-2.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    This will install all necessary packages, including `geopandas`, `scikit-learn`, `sentence-transformers`, `psycopg2-binary`, and `pgvector` (for PostgreSQL vector type support).
+**Prerequisites:**
+-   **Conda/Miniconda:** You must have Conda installed. If not, download and install it from [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Anaconda.
+-   **GDAL/OGR (External Tool):** For processing OpenStreetMap PBF data, the `ogr2ogr` command-line tool (part of GDAL) must be installed and available in your system PATH. Installation methods vary by OS (e.g., `sudo apt install gdal-bin` on Debian/Ubuntu, `brew install gdal` on macOS, or `conda install -c conda-forge gdal` *before* running the environment script if you prefer to manage it with Conda globally or in the base environment).
 
-3.  **Download NLP Models**:
+**Setup Steps:**
+
+1.  **Navigate to this directory** (`backend/src/scripts/python/`).
+2.  **Run the Conda Environment Creation Script:**
     ```bash
-    python -m spacy download en_core_web_md
-    # python -m spacy download en_core_web_lg # Optional, larger model
-    # NLTK data (if not already present from previous project setup)
-    # import nltk; nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('punkt')
+    ./create_conda_env_strict.sh
     ```
-4.  **GDAL/OGR**: Ensure `ogr2ogr` (part of GDAL) is installed and in your system PATH for processing OpenStreetMap PBF data. See main project `README.md` for installation guidance.
+    This script will:
+    *   Create a Conda environment named `iqp-py310` (or attempt to fix it if it exists and you use the `-f` flag).
+    *   Install all required Python packages using `conda` (primarily from `conda-forge`) and `pip` for specific packages like `bertopic`, `python-dotenv`, and `pgvector`.
+    *   Download necessary spaCy models (`en_core_web_md`, `en_core_web_lg`).
+    *   Download required NLTK data (`punkt`, `stopwords`, `wordnet`, `averaged_perceptron_tagger`) into a local directory (`./nltk_data_local/`) within this Python scripts directory to avoid user-level or system-wide NLTK data installations.
+    *   Run a basic verification test at the end.
+
+3.  **Activate the Conda Environment:**
+    ```bash
+    conda activate iqp-py310
+    ```
+    You must activate this environment in any terminal session where you intend to run these Python scripts directly or when running the Node.js backend that calls these scripts.
+
+**Note on `requirements.txt`:**
+While a `requirements.txt` file exists in this directory, it primarily serves as a reference or for specific `pip` installations handled *within* the `create_conda_env_strict.sh` script. Do not run `pip install -r requirements.txt` directly as a primary setup step; use the shell script.
 
 ## Script Usage (from Node.js via `pythonService.js`)
 
-The Node.js backend service (`pythonService.js`) invokes these scripts directly with specific arguments.
+The Node.js backend service (`pythonService.js`) invokes these scripts directly with specific arguments. Ensure the `iqp-py310` Conda environment is activated when running the Node.js backend.
 
 ### `proximity_analysis.py`
 Calculates proximity to various features and other contextual metrics.
--   **Node.js Call Signature (via `pythonService.runProximityAnalysis`)**:
-    -   `erraticId` (integer, required): The ID of the erratic.
-    -   `featureLayers` (array of strings, optional): Specific feature layers to analyze.
-    -   `updateDb` (boolean, optional): If true, script attempts to update `ErraticAnalyses` table via `data_loader.py`.
--   **Direct Command-Line Example**:
+-   **Direct Command-Line Example (ensure `iqp-py310` is active):**
     ```bash
     python proximity_analysis.py <erratic_id> [--features layer1 layer2] [--update-db] [--output results.json]
     ```
@@ -44,57 +47,46 @@ Calculates proximity to various features and other contextual metrics.
 ### `classify_erratic.py`
 Handles NLP tasks: text preprocessing, generating sentence embeddings, training/loading topic models, and classifying erratics.
 
-1.  **Classification Mode**:
-    -   **Node.js Call Signature (via `pythonService.runClassification`)**:
-        -   `erraticId` (integer, required): The ID of the erratic to classify.
-        -   `updateDb` (boolean, optional): If true, script attempts to update `ErraticAnalyses` table.
-    -   **Direct Command-Line Example**:
-        ```bash
-        python classify_erratic.py <erratic_id> [--update-db] [--output classification.json]
-        ```
+1.  **Classification Mode (ensure `iqp-py310` is active):**
+    ```bash
+    python classify_erratic.py <erratic_id> [--update-db] [--output classification.json]
+    ```
 
-2.  **Topic Model Building Mode**:
-    -   **Node.js Call Signature (via `pythonService.runBuildTopicModels`)**:
-        -   `outputPath` (string, optional): Path to save the output/log of the build process (e.g., 'build_topics_result.json').
-    -   **Direct Command-Line Example (as used by `pythonService.js`)**:
-        ```bash
-        # <placeholder_id> is required by script structure but not used for building.
-        python classify_erratic.py 1 --build-topics --output <outputPath>
-        ```
+2.  **Topic Model Building Mode (ensure `iqp-py310` is active):**
+    ```bash
+    # <placeholder_id> is required by script structure but not used for building.
+    python classify_erratic.py 1 --build-topics --output <outputPath>
+    ```
 
 ### `clustering.py`
 Performs spatial clustering on erratics.
--   **Node.js Call Signature (via `pythonService.runClusteringAnalysis`)**:
-    -   `algorithm` (string, required): e.g., 'dbscan', 'kmeans', 'hierarchical'.
-    -   `featuresToCluster` (array of strings, optional): Features to use (e.g., ['latitude', 'longitude']).
-    -   `algoParams` (object, optional): Algorithm-specific parameters as a JSON string (e.g., `JSON.stringify({ eps: 0.5 })`).
-    -   `outputToFile` (boolean, optional): Passed as `--output <filename>` if true.
-    -   `outputFilename` (string, optional): Filename for output if `outputToFile` is true.
--   **Direct Command-Line Example**:
+-   **Direct Command-Line Example (ensure `iqp-py310` is active):**
     ```bash
     python clustering.py --algorithm dbscan [--features lat lon] [--algo_params '{"eps":0.5}'] [--output results.json]
     ```
 
 ### Utility Scripts
--   `utils/data_loader.py`: Manages database connections (using `psycopg2` and `pgvector` for vector types), data fetching from PostgreSQL, downloading/caching external datasets, and updating the `ErraticAnalyses` table.
+-   `utils/data_loader.py`: Manages database connections (using `psycopg2` and `pgvector` for vector types), data fetching from PostgreSQL, downloading/caching external datasets, and updating the `ErraticAnalyses` table. Loads database credentials from the project root `.env` file.
 -   `utils/geo_utils.py`: Provides core geospatial functions.
 
 ## Data Storage
 
-The scripts use the following data directories:
+The scripts use the following data directories relative to `backend/src/scripts/python/`:
 
-- `data/`: Main data directory
-- `data/gis/`: GIS datasets
-- `data/cache/`: Cached analysis results
+- `data/`: Main data directory for larger datasets or models.
+- `data/gis/`: Downloaded external GIS datasets.
+- `data/cache/`: Cached intermediate results (e.g., processed GeoDataFrames).
+- `nltk_data_local/`: Locally downloaded NLTK data packages (this directory is in `.gitignore`).
 
 ## Common Issues
 
-1. **Missing conda environment**: Make sure to run `./create_conda_env.sh` first
-2. **Package compatibility errors**: Run `./fix_env.sh` to install compatible versions
-3. **Missing spaCy models**: Run `python -m spacy download en_core_web_lg`
-4. **Database connection issues**: Ensure the database credentials are set in environment variables
+1.  **Conda Not Found:** Ensure Conda is installed and its `bin` directory is in your system `PATH`.
+2.  **Environment Activation:** Always activate the `iqp-py310` environment (`conda activate iqp-py310`) before running scripts or the Node.js backend.
+3.  **Script Execution Errors:** If `create_conda_env_strict.sh` completed without errors but scripts fail, ensure the environment is active. Check script-specific logs for more details. Consider re-running `./create_conda_env_strict.sh -f` to attempt to fix the environment.
+4.  **Database Connection Issues:** Ensure PostgreSQL is running and accessible. Database credentials are now loaded from the project root `.env` file by `utils/data_loader.py`. Verify this `.env` file is correctly populated.
+5.  **`ogr2ogr` Not Found:** If settlement or modern road processing fails, ensure GDAL/OGR is installed and `ogr2ogr` is in your PATH.
 
 ## Further Documentation
 
-- See `SpatialAnalysisMetaPrompt.md` for detailed information about the analysis approach
-- Each script includes comprehensive documentation and help text (use `--help` flag) 
+- See `SpatialAnalysisMetaPrompt.md` for detailed information about the analysis approach.
+- Each script includes comprehensive documentation and help text (use `--help` flag when running from the command line). 

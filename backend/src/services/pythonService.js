@@ -1,7 +1,6 @@
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 
 /**
  * Service for executing Python scripts and processing results
@@ -23,35 +22,13 @@ class PythonService {
       throw new Error(`Python script not found: ${scriptPath}`);
     }
     
-    // Determine the Python executable to use
-    // First check if the conda environment is active
-    const condaEnvName = 'iqp-py310';
-    const condaEnv = process.env.CONDA_DEFAULT_ENV;
-    
-    let pythonCommand = 'python';
-    
-    // If we're not in the right conda environment, try to activate it
-    if (condaEnv !== condaEnvName) {
-      // On Windows
-      if (os.platform() === 'win32') {
-        pythonCommand = `conda run -n ${condaEnvName} python`;
-      } 
-      // On Unix-like systems
-      else {
-        // Try to find conda executable
-        try {
-          const condaPath = await this.getCondaPath();
-          if (condaPath) {
-            pythonCommand = `${condaPath} run -n ${condaEnvName} python`;
-          }
-        } catch (error) {
-          console.warn('Unable to find conda. Using system Python.');
-        }
-      }
-    }
+    // Use a simple python command. Assumes the correct environment is already activated
+    // where this Node.js process is running, or that 'python' resolves correctly.
+    // Consider using 'python3' if that is the standard command for your Python 3 environment.
+    const pythonCommand = 'python'; 
     
     // Build the command
-    const command = `${pythonCommand} ${scriptPath} ${args.join(' ')}`;
+    const command = `${pythonCommand} "${scriptPath}" ${args.join(' ')}`;
     console.log(`[PythonService] Executing command: ${command}`);
     
     // Execute the command
@@ -67,7 +44,8 @@ class PythonService {
         }
         
         if (stderr) {
-          console.warn(`Python script warning: ${stderr}`);
+          // Log Python warnings/stderr but don't necessarily reject unless parse fails
+          console.warn(`[PythonService] Python script stderr/warnings for ${scriptName}:\n${stderr}`);
         }
         
         try {
@@ -75,30 +53,12 @@ class PythonService {
           const result = JSON.parse(stdout);
           resolve(result);
         } catch (parseError) {
-          console.error('Failed to parse Python script output as JSON:', parseError);
-          console.error('Raw output:', stdout);
-          // Include stderr in the error if available, as it might contain Python tracebacks
-          const errorMessage = `Invalid output format from Python script. stderr: ${stderr || 'N/A'}`;
+          console.error('[PythonService] Failed to parse Python script output as JSON:', parseError);
+          console.error('[PythonService] Raw stdout:', stdout);
+          // Include stderr in the error if available, as it might contain Python tracebacks or script errors
+          const errorMessage = `Invalid JSON output from Python script ${scriptName}. Parse Error: ${parseError.message}. stderr: ${stderr || 'N/A'}`;
           reject(new Error(errorMessage));
         }
-      });
-    });
-  }
-  
-  /**
-   * Try to find the conda executable path
-   * @returns {Promise<string|null>} - Path to conda executable or null if not found
-   * @private
-   */
-  async getCondaPath() {
-    return new Promise((resolve) => {
-      exec('which conda', (error, stdout) => {
-        if (error || !stdout) {
-          resolve(null);
-          return;
-        }
-        
-        resolve(stdout.trim());
       });
     });
   }
