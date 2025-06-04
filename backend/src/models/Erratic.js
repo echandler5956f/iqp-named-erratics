@@ -7,31 +7,76 @@ module.exports = (sequelize, DataTypes) => {
     },
     name: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          args: true,
+          msg: 'Erratic name cannot be empty.'
+        },
+        len: {
+          args: [1, 255],
+          msg: 'Erratic name must be between 1 and 255 characters.'
+        }
+      }
     },
     location: {
       type: DataTypes.GEOMETRY('POINT'),
-      allowNull: false
+      allowNull: false // Validated at service level for specific lat/lon presence
     },
     elevation: {
       type: DataTypes.FLOAT,
-      allowNull: true
+      allowNull: true,
+      validate: {
+        isFloat: {
+          args: true,
+          msg: 'Elevation must be a valid number.'
+        }
+        // Add min/max here if applicable, e.g., min: -500, max: 9000
+      }
     },
     size_meters: {
       type: DataTypes.FLOAT,
-      allowNull: true
+      allowNull: true,
+      validate: {
+        isFloat: {
+          args: true,
+          msg: 'Size must be a valid number.'
+        },
+        min: {
+          args: [0],
+          msg: 'Size cannot be negative.'
+        }
+      }
     },
     rock_type: {
       type: DataTypes.STRING(100),
-      allowNull: true
+      allowNull: true,
+      validate: {
+        len: {
+          args: [0, 100],
+          msg: 'Rock type must be 100 characters or less.'
+        }
+      }
     },
     estimated_age: {
       type: DataTypes.STRING(100),
-      allowNull: true
+      allowNull: true,
+      validate: {
+        len: {
+          args: [0, 100],
+          msg: 'Estimated age must be 100 characters or less.'
+        }
+      }
     },
     discovery_date: {
       type: DataTypes.DATE,
-      allowNull: true
+      allowNull: true,
+      validate: {
+        isDate: {
+          args: true,
+          msg: 'Discovery date must be a valid date.'
+        }
+      }
     },
     description: {
       type: DataTypes.TEXT,
@@ -47,7 +92,17 @@ module.exports = (sequelize, DataTypes) => {
     },
     image_url: {
       type: DataTypes.STRING,
-      allowNull: true
+      allowNull: true,
+      validate: {
+        isUrlOrEmpty(value) {
+          if (value === null || value === '' || value === undefined) {
+            return; // Allow empty or null
+          }
+          if (!DataTypes.STRING.prototype.options.validate.isUrl(value)) {
+            throw new Error('Image URL must be a valid URL.');
+          }
+        }
+      }
     }
   }, {
     timestamps: true

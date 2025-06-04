@@ -10,19 +10,52 @@ module.exports = (sequelize, DataTypes) => {
     username: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true
+      unique: {
+        args: true,
+        msg: 'Username already in use!'
+      },
+      validate: {
+        notEmpty: {
+          args: true,
+          msg: 'Username cannot be empty.'
+        },
+        len: {
+          args: [3, 30],
+          msg: 'Username must be between 3 and 30 characters.'
+        }
+      }
     },
     email: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
+      unique: {
+        args: true,
+        msg: 'Email address already in use!'
+      },
       validate: {
-        isEmail: true
+        isEmail: {
+          args: true,
+          msg: 'Please enter a valid email address.'
+        },
+        notEmpty: {
+          args: true,
+          msg: 'Email cannot be empty.'
+        }
       }
     },
     password: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          args: true,
+          msg: 'Password cannot be empty.'
+        },
+        len: {
+          args: [8, 100],
+          msg: 'Password must be between 8 and 100 characters.'
+        }
+      }
     },
     is_admin: {
       type: DataTypes.BOOLEAN,
