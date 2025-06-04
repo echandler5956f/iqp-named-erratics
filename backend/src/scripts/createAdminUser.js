@@ -1,4 +1,4 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.env') });
 
 // Purpose: Script to create an admin user.
 // Usage: node backend/src/scripts/createAdminUser.js <username> <email> <password> [--admin]

@@ -4,8 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
 
-// Load environment variables from .env file
-const envPath = path.resolve(__dirname, '../../.env');
+// Load environment variables from .env file in the project root
+// __dirname for this script is backend/src/scripts/
+const envPath = path.resolve(__dirname, '../../../.env'); 
+console.log(`[importData.js] Attempting to load environment variables from: ${envPath}`);
 const result = dotenv.config({ path: envPath });
 if (result.error) {
   console.error('Error loading .env file:', result.error);

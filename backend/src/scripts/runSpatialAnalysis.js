@@ -6,6 +6,21 @@
  */
 
 const path = require('path');
+const dotenv = require('dotenv');
+
+// Load environment variables from .env file in the project root
+// __dirname for this script is backend/src/scripts/
+const envPath = path.resolve(__dirname, '../../../.env');
+console.log(`[runSpatialAnalysis.js] Attempting to load environment variables from: ${envPath}`);
+const result = dotenv.config({ path: envPath });
+
+if (result.error) {
+  console.error(`[runSpatialAnalysis.js] Error loading .env file: ${result.error.message}`);
+  // Allow script to continue if .env is optional and vars might be set globally,
+  // but log a clear warning. Actual failure will happen if DB vars are missing later.
+  console.warn(`[runSpatialAnalysis.js] Warning: Could not load .env file. Relying on globally set environment variables.`);
+}
+
 const db = require('../models');
 const pythonService = require('../services/pythonService');
 

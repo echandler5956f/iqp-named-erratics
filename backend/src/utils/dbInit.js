@@ -6,14 +6,25 @@ async function enablePostGIS() {
   try {
     // Execute raw SQL to enable PostGIS extension
     await sequelize.query('CREATE EXTENSION IF NOT EXISTS postgis;');
-    console.log('PostGIS extension enabled successfully');
+    console.log('PostGIS extension enabled or already exists.');
   } catch (error) {
-    console.error('Error enabling PostGIS extension:', error);
-    throw error;
+    console.error('Error enabling PostGIS extension. This might be a permissions issue or PostGIS may not be installed on the DB server. This is usually fine if migrations handle extension creation or if it was pre-installed:', error.message);
+    // Do not throw an error here, as the application might still run if PostGIS was enabled manually or by a migration
   }
 }
 
-// Initialize database
+// Function to check if pgvector extension is available and enable it
+async function enablePgVector() {
+  try {
+    await sequelize.query('CREATE EXTENSION IF NOT EXISTS vector;');
+    console.log('pgvector extension enabled or already exists.');
+  } catch (error) {
+    console.error('Error enabling pgvector extension. This might be a permissions issue or pgvector may not be installed on the DB server. This is usually fine if migrations handle extension creation or if it was pre-installed:', error.message);
+    // Do not throw an error here
+  }
+}
+
+// Initialize database connection and check extensions
 async function initializeDatabase() {
   try {
     // Test database connection
@@ -25,27 +36,21 @@ async function initializeDatabase() {
       if (authError.parent) {
         console.error('Underlying error:', authError.parent.message);
       }
-      throw new Error('Unable to connect to the database. Check your connection details.');
+      throw new Error('Unable to connect to the database. Check your connection details and ensure the database server is running.');
     }
     
-    // Enable PostGIS extension
+    // Attempt to enable PostGIS and pgvector extensions
+    // These operations might fail if the DB user lacks permissions or if the extensions aren't installed on the server.
+    // It's preferable for extensions to be provisioned by a DBA or dedicated migration script with higher privileges.
     await enablePostGIS();
+    await enablePgVector();
     
-    // Sync all models
-    // Note: force: true will drop tables if they exist
-    // Use with caution in production
-    const force = process.env.NODE_ENV === 'development' && process.env.DB_FORCE_SYNC === 'true';
-    try {
-      await sequelize.sync({ force });
-      console.log('Database synchronized successfully');
-    } catch (syncError) {
-      console.error('Failed to sync database models:', syncError.message);
-      throw syncError;
-    }
+    // REMOVED: sequelize.sync() - Schema should be managed by migrations ONLY.
+    // console.log('Database schema should be managed by migrations.');
     
     return true;
   } catch (error) {
-    console.error('Unable to initialize database:', error.message);
+    console.error('Failed to initialize database connection:', error.message);
     return false;
   }
 }

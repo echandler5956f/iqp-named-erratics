@@ -30,6 +30,7 @@ except ImportError:
     # For older shapely versions
     from shapely.wkb import loads as wkb_loads
     from shapely.wkb import dumps as wkb_dumps
+import pathlib # Ensure pathlib is imported
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -241,14 +242,19 @@ def _process_osm_pbf_with_ogr(pbf_filepath: str, output_geojson_path: str, osm_e
 def get_db_connection():
     """Establish a connection to the PostgreSQL database using environment variables or a .env file."""
     
-    # Load environment variables from .env file if it exists
-    # Looks for .env in the current directory or parent directories
-    dotenv_path = find_dotenv()
-    if dotenv_path:
-         logger.info(f"Loading environment variables from: {dotenv_path}")
+    # Construct the path to the .env file in the project root
+    # Assumes this script (data_loader.py) is in backend/src/scripts/python/utils/
+    current_script_path = pathlib.Path(__file__).resolve()
+    # project_root should be 4 levels up from .../utils/data_loader.py
+    # utils -> python -> scripts -> src -> backend -> project_root
+    project_root = current_script_path.parent.parent.parent.parent.parent 
+    dotenv_path = project_root / '.env'
+
+    if dotenv_path.exists():
+         logger.info(f"Loading environment variables from explicit path: {dotenv_path}")
          load_dotenv(dotenv_path=dotenv_path)
     else:
-         logger.info("No .env file found, relying on system environment variables.")
+         logger.info(f"No .env file found at explicit path {dotenv_path}. Relying on system environment variables or pre-loaded.")
 
     # Try to get database configuration from environment variables
     try:
