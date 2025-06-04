@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const db = require('../models');
+const logger = require('../utils/logger'); // Import logger
 const { Erratic, ErraticAnalysis, ErraticMedia, ErraticReference, sequelize } = db;
 
 class ErraticService {
@@ -22,7 +23,7 @@ class ErraticService {
       try {
         plainErratic.location = JSON.parse(plainErratic.location);
       } catch (parseError) {
-        console.error(`[ErraticService] Failed to parse location for erratic ${plainErratic.id}:`, parseError);
+        logger.error(`[ErraticService] Failed to parse location for erratic ${plainErratic.id}`, { error: parseError.message, erraticId: plainErratic.id });
         plainErratic.location = null; // Or keep as string, or handle error differently
       }
     }
@@ -30,6 +31,7 @@ class ErraticService {
   }
 
   async getAllErratics(queryParams) {
+    logger.info('[ErraticService] Getting all erratics', { queryParams });
     const { rockType, minSize, maxSize, search } = queryParams;
     const whereConditions = {};
 
@@ -46,48 +48,67 @@ class ErraticService {
       ];
     }
 
-    const erratics = await Erratic.findAll({
-      where: whereConditions,
-      attributes: [
-        'id', 'name', 'rock_type', 'size_meters', 'elevation', 'image_url',
-        'estimated_age', 'description', 'cultural_significance',
-        [sequelize.fn('ST_AsGeoJSON', sequelize.col('Erratic.location')), 'location']
-      ],
-      include: [{
-        model: ErraticAnalysis,
-        as: 'analysis',
-        attributes: { exclude: ['erraticId', 'createdAt', 'updatedAt'] },
-      }],
-      // Add ordering, pagination options here if needed in the future
-    });
-
-    return erratics.map(this._formatErratic);
+    try {
+      const erratics = await Erratic.findAll({
+        where: whereConditions,
+        attributes: [
+          'id', 'name', 'rock_type', 'size_meters', 'elevation', 'image_url',
+          'estimated_age', 'description', 'cultural_significance',
+          [sequelize.fn('ST_AsGeoJSON', sequelize.col('Erratic.location')), 'location']
+        ],
+        include: [{
+          model: ErraticAnalysis,
+          as: 'analysis',
+          attributes: { exclude: ['erraticId', 'createdAt', 'updatedAt'] },
+        }],
+      });
+      logger.info(`[ErraticService] Found ${erratics.length} erratics.`);
+      return erratics.map(e => this._formatErratic(e)); // Ensure formatting is applied
+    } catch (dbError) {
+      logger.error('[ErraticService] Database error fetching all erratics', { error: dbError.message, stack: dbError.stack });
+      const serviceError = new Error('Failed to fetch erratics.');
+      serviceError.statusCode = 500;
+      throw serviceError;
+    }
   }
 
   async getErraticById(id) {
-    const erraticInstance = await Erratic.findByPk(id, {
-      attributes: {
-        include: [[sequelize.fn('ST_AsGeoJSON', sequelize.col('Erratic.location')), 'location']]
-      },
-      include: [
-        { model: ErraticMedia, as: 'media', attributes: ['id', 'media_type', 'url', 'title', 'description', 'credit'] },
-        { model: ErraticReference, as: 'references', attributes: ['id', 'reference_type', 'title', 'authors', 'publication', 'year', 'url'] },
-        { model: ErraticAnalysis, as: 'analysis', attributes: { exclude: ['erraticId', 'createdAt', 'updatedAt'] } },
-      ],
-    });
+    logger.info(`[ErraticService] Getting erratic by ID: ${id}`);
+    try {
+      const erraticInstance = await Erratic.findByPk(id, {
+        attributes: {
+          include: [[sequelize.fn('ST_AsGeoJSON', sequelize.col('Erratic.location')), 'location']]
+        },
+        include: [
+          { model: ErraticMedia, as: 'media', attributes: ['id', 'media_type', 'url', 'title', 'description', 'credit'] },
+          { model: ErraticReference, as: 'references', attributes: ['id', 'reference_type', 'title', 'authors', 'publication', 'year', 'url'] },
+          { model: ErraticAnalysis, as: 'analysis', attributes: { exclude: ['erraticId', 'createdAt', 'updatedAt'] } },
+        ],
+      });
 
-    if (!erraticInstance) {
-      const error = new Error('Erratic not found');
-      error.statusCode = 404;
-      throw error;
+      if (!erraticInstance) {
+        logger.warn(`[ErraticService] Erratic not found with ID: ${id}`);
+        const error = new Error('Erratic not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      logger.info(`[ErraticService] Successfully fetched erratic ID: ${id}`);
+      return this._formatErratic(erraticInstance);
+    } catch (dbError) {
+      // Catch errors not already handled (e.g. from _formatErratic if it threw, or DB connection issues)
+      logger.error(`[ErraticService] Database error fetching erratic by ID ${id}`, { error: dbError.message, stack: dbError.stack });
+      const serviceError = new Error('Failed to fetch erratic details.');
+      serviceError.statusCode = 500;
+      throw serviceError; 
     }
-    return this._formatErratic(erraticInstance);
   }
 
   async getNearbyErratics(lat, lng, radiusKm = 50) {
+    logger.info(`[ErraticService] Getting nearby erratics for lat: ${lat}, lng: ${lng}, radiusKm: ${radiusKm}`);
     if (!lat || !lng) {
       const error = new Error('Latitude and longitude are required');
       error.statusCode = 400;
+      logger.warn('[ErraticService] Get nearby erratics failed: Latitude or longitude missing.');
       throw error;
     }
 
@@ -98,30 +119,40 @@ class ErraticService {
     const point = sequelize.fn('ST_MakePoint', longitude, latitude);
     const distanceSphere = sequelize.fn('ST_DistanceSphere', sequelize.col('location'), point);
 
-    const erratics = await Erratic.findAll({
-      attributes: [
-        'id', 'name', 'rock_type', 'size_meters', 'image_url',
-        [sequelize.fn('ST_AsGeoJSON', sequelize.col('location')), 'location'],
-        [distanceSphere, 'distance']
-      ],
-      where: sequelize.where(distanceSphere, { [Op.lte]: radiusMeters }),
-      order: [[sequelize.literal('distance'), 'ASC']],
-    });
+    try {
+      const erratics = await Erratic.findAll({
+        attributes: [
+          'id', 'name', 'rock_type', 'size_meters', 'image_url',
+          [sequelize.fn('ST_AsGeoJSON', sequelize.col('location')), 'location'],
+          [distanceSphere, 'distance']
+        ],
+        where: sequelize.where(distanceSphere, { [Op.lte]: radiusMeters }),
+        order: [[sequelize.literal('distance'), 'ASC']],
+      });
 
-    return erratics.map(erraticInstance => {
-      const plainErratic = this._formatErratic(erraticInstance);
-      if (plainErratic && plainErratic.distance !== undefined) {
-        plainErratic.distance = parseFloat(plainErratic.distance) / 1000; // Convert meters to kilometers
-      }
-      return plainErratic;
-    });
+      logger.info(`[ErraticService] Found ${erratics.length} nearby erratics.`);
+      return erratics.map(erraticInstance => {
+        const plainErratic = this._formatErratic(erraticInstance);
+        if (plainErratic && plainErratic.distance !== undefined) {
+          plainErratic.distance = parseFloat(plainErratic.distance) / 1000;
+        }
+        return plainErratic;
+      });
+    } catch (dbError) {
+      logger.error('[ErraticService] Database error fetching nearby erratics', { error: dbError.message, stack: dbError.stack, lat, lng, radiusKm });
+      const serviceError = new Error('Failed to fetch nearby erratics.');
+      serviceError.statusCode = 500;
+      throw serviceError;
+    }
   }
 
   async createErratic(data) {
     const { name, latitude, longitude, ...otherData } = data;
+    logger.info(`[ErraticService] Attempting to create erratic: ${name}`);
     if (!name || latitude === undefined || longitude === undefined) {
       const error = new Error('Name, latitude, and longitude are required');
       error.statusCode = 400;
+      logger.warn(`[ErraticService] Create erratic failed for ${name}: ${error.message}`);
       throw error;
     }
 
@@ -136,15 +167,29 @@ class ErraticService {
       discovery_date: otherData.discovery_date ? new Date(otherData.discovery_date) : null,
     };
 
-    const erratic = await Erratic.create(erraticData);
-    return { id: erratic.id, message: 'Erratic created successfully' };
+    try {
+      const erratic = await Erratic.create(erraticData);
+      logger.info(`[ErraticService] Erratic ${name} created successfully with ID: ${erratic.id}`);
+      return { id: erratic.id, message: 'Erratic created successfully' };
+    } catch (dbError) {
+      logger.error(`[ErraticService] Database error creating erratic ${name}`, { error: dbError.message, stack: dbError.stack, data });
+      const serviceError = new Error('Failed to create erratic.');
+      serviceError.statusCode = 500;
+      if (dbError.name === 'SequelizeValidationError') {
+        serviceError.message = dbError.errors.map(e => e.message).join(', ');
+        serviceError.statusCode = 400;
+      }
+      throw serviceError;
+    }
   }
 
   async updateErratic(id, data) {
-    const erratic = await Erratic.findByPk(id);
-    if (!erratic) {
+    logger.info(`[ErraticService] Attempting to update erratic ID: ${id}`);
+    const erraticExists = await Erratic.findByPk(id);
+    if (!erraticExists) {
       const error = new Error('Erratic not found');
       error.statusCode = 404;
+      logger.warn(`[ErraticService] Update erratic failed: Erratic ID ${id} not found.`);
       throw error;
     }
 
@@ -177,31 +222,39 @@ class ErraticService {
       }
 
       if (Object.keys(analysisUpdateData).length > 0) {
-        const [analysisRecord, created] = await ErraticAnalysis.findOrCreate({
+        const [/*analysisRecord*/, created] = await ErraticAnalysis.findOrCreate({
           where: { erraticId: id },
           defaults: { ...analysisUpdateData, erraticId: id }, // Ensure erraticId is part of defaults for creation
           transaction,
         });
         if (!created) {
-          await analysisRecord.update(analysisUpdateData, { transaction });
+          // If record existed, update it. Sequelize findOrCreate doesn't update if found.
+          await ErraticAnalysis.update(analysisUpdateData, { where: { erraticId: id }, transaction });
         }
       }
       await transaction.commit();
+      logger.info(`[ErraticService] Erratic ID ${id} updated successfully.`);
       return { message: 'Erratic updated successfully' };
-    } catch (err) {
+    } catch (dbError) {
       await transaction.rollback();
-      console.error('[ErraticService] Error updating erratic:', err);
-      const error = new Error('Error updating erratic');
-      error.statusCode = 500;
-      throw error;
+      logger.error(`[ErraticService] Database error updating erratic ID ${id}`, { error: dbError.message, stack: dbError.stack, data });
+      const serviceError = new Error('Error updating erratic');
+      serviceError.statusCode = 500;
+      if (dbError.name === 'SequelizeValidationError') {
+        serviceError.message = dbError.errors.map(e => e.message).join(', ');
+        serviceError.statusCode = 400;
+      }
+      throw serviceError;
     }
   }
 
   async deleteErratic(id) {
+    logger.info(`[ErraticService] Attempting to delete erratic ID: ${id}`);
     const erratic = await Erratic.findByPk(id);
     if (!erratic) {
       const error = new Error('Erratic not found');
       error.statusCode = 404;
+      logger.warn(`[ErraticService] Delete erratic failed: Erratic ID ${id} not found.`);
       throw error;
     }
 
@@ -211,8 +264,16 @@ class ErraticService {
     // await ErraticReference.destroy({ where: { erraticId: id }, transaction });
     // await ErraticAnalysis.destroy({ where: { erraticId: id }, transaction });
     
-    await erratic.destroy(); // This will trigger CASCADE deletes if associations are configured correctly.
-    return { message: 'Erratic deleted successfully' };
+    try {
+      await erratic.destroy(); // This will trigger CASCADE deletes if associations are configured correctly.
+      logger.info(`[ErraticService] Erratic ID ${id} deleted successfully.`);
+      return { message: 'Erratic deleted successfully' };
+    } catch (dbError) {
+      logger.error(`[ErraticService] Database error deleting erratic ID ${id}`, { error: dbError.message, stack: dbError.stack });
+      const serviceError = new Error('Failed to delete erratic.');
+      serviceError.statusCode = 500;
+      throw serviceError;
+    }
   }
 }
 

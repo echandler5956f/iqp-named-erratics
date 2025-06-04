@@ -1,4 +1,5 @@
 const authService = require('../services/authService');
+const logger = require('../utils/logger'); // Import logger
 
 // Register a new user
 exports.register = async (req, res) => {
@@ -6,8 +7,13 @@ exports.register = async (req, res) => {
     const result = await authService.register(req.body);
     res.status(201).json(result);
   } catch (error) {
-    console.error('Registration controller error:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('Registration controller error', { 
+      message: error.message, 
+      statusCode: error.statusCode, 
+      requestBody: req.body, // Log problematic request body for debugging
+      stack: error.stack 
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'An unexpected error occurred during registration.' });
   }
 };
 
@@ -17,8 +23,13 @@ exports.login = async (req, res) => {
     const result = await authService.login(req.body);
     res.json(result);
   } catch (error) {
-    console.error('Login controller error:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('Login controller error', { 
+      message: error.message, 
+      statusCode: error.statusCode, 
+      usernameAttempt: req.body?.username, // Log username for context
+      stack: error.stack 
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'An unexpected error occurred during login.' });
   }
 };
 
@@ -29,7 +40,12 @@ exports.getProfile = async (req, res) => {
     const userProfile = await authService.getProfile(req.user.id);
     res.json(userProfile);
   } catch (error) {
-    console.error('Profile controller error:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('Profile controller error', { 
+      message: error.message, 
+      statusCode: error.statusCode, 
+      userId: req.user?.id, 
+      stack: error.stack 
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'An unexpected error occurred fetching profile.' });
   }
 }; 

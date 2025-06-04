@@ -1,4 +1,5 @@
 const erraticService = require('../services/erraticService');
+const logger = require('../utils/logger'); // Import logger
 
 // Get all erratics with optional filtering
 exports.getAllErratics = async (req, res) => {
@@ -6,8 +7,13 @@ exports.getAllErratics = async (req, res) => {
     const erratics = await erraticService.getAllErratics(req.query);
     res.json(erratics);
   } catch (error) {
-    console.error('[ErraticController] Error fetching all erratics:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error fetching all erratics', {
+      message: error.message,
+      statusCode: error.statusCode,
+      query: req.query,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to fetch erratics.' });
   }
 };
 
@@ -17,8 +23,13 @@ exports.getErraticById = async (req, res) => {
     const erratic = await erraticService.getErraticById(req.params.id);
     res.json(erratic);
   } catch (error) {
-    console.error('[ErraticController] Error fetching erratic by ID:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error fetching erratic by ID', {
+      message: error.message,
+      statusCode: error.statusCode,
+      erraticId: req.params.id,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to fetch erratic details.' });
   }
 };
 
@@ -29,8 +40,13 @@ exports.getNearbyErratics = async (req, res) => {
     const erratics = await erraticService.getNearbyErratics(lat, lng, radius);
     res.json(erratics);
   } catch (error) {
-    console.error('[ErraticController] Error fetching nearby erratics:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error fetching nearby erratics', {
+      message: error.message,
+      statusCode: error.statusCode,
+      query: req.query,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to fetch nearby erratics.' });
   }
 };
 
@@ -40,8 +56,13 @@ exports.createErratic = async (req, res) => {
     const result = await erraticService.createErratic(req.body);
     res.status(201).json(result);
   } catch (error) {
-    console.error('[ErraticController] Error creating erratic:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error creating erratic', {
+      message: error.message,
+      statusCode: error.statusCode,
+      requestBody: req.body,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to create erratic.' });
   }
 };
 
@@ -51,8 +72,14 @@ exports.updateErratic = async (req, res) => {
     const result = await erraticService.updateErratic(req.params.id, req.body);
     res.json(result);
   } catch (error) {
-    console.error('[ErraticController] Error updating erratic:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error updating erratic', {
+      message: error.message,
+      statusCode: error.statusCode,
+      erraticId: req.params.id,
+      requestBody: req.body,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update erratic.' });
   }
 };
 
@@ -62,7 +89,12 @@ exports.deleteErratic = async (req, res) => {
     const result = await erraticService.deleteErratic(req.params.id);
     res.json(result);
   } catch (error) {
-    console.error('[ErraticController] Error deleting erratic:', error.message);
-    res.status(error.statusCode || 500).json({ message: error.message });
+    logger.error('[ErraticController] Error deleting erratic', {
+      message: error.message,
+      statusCode: error.statusCode,
+      erraticId: req.params.id,
+      stack: error.stack
+    });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to delete erratic.' });
   }
 }; 

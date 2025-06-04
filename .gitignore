@@ -1,27 +1,41 @@
+# Node modules
 **/node_modules
+
+# Cursor-specific files
 .cursorrules
 .cursor
+
+# Python cache and compiled files
 **/__pycache__
 **/*.pyc
+
+# Common temporary/OS files
 **/~
+
+# Data and Cache directories (be specific if some cache should be versioned)
+# Example: backend/src/scripts/python/data/cache/
+# For now, keeping general cache if that was the intent for other **/cache entry
 **/cache
-**/*.pdf
-**/*.dbf
-**/*.prj
-**/*.shx
-**/*.sbx
-**/*.shp
-**/*.cpg
-**/*.sbn
-**/*.geojson
-**/*.xml
-**/*.zip
-**/*.json
-**/*.bin
-**/*.leg
-**/*.tfw
-**/*.tif
-**/*.env
+
+# GIS data files (often large and binary)
+backend/src/scripts/python/data/
+
+# Environment variables files
+*.env
+**.env # Covers .env in any subdirectory, but be specific if possible
+.env.*
+!.env.example
 
 # Python NLTK data local cache
 backend/src/scripts/python/nltk_data_local/
+
+# Log files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+build/
+dist/

@@ -2,23 +2,24 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const dotenv = require('dotenv');
+const logger = require('./utils/logger'); // Import the logger
 
 // Load environment variables from .env file in the project root
 // __dirname is backend/src/, so ../../.env goes to project_root/.env
 const envPath = path.resolve(__dirname, '../../.env'); 
-console.log('Attempting to load environment variables from:', envPath);
+logger.info(`Loading environment from: ${envPath}`);
 const result = dotenv.config({ path: envPath });
 if (result.error) {
-  console.error('Error loading .env file:', result.error);
+  logger.error('Error loading .env file:', result.error);
   process.exit(1);
 }
 
 // Validate required environment variables
-const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
+const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'JWT_SECRET'];
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 if (missingEnvVars.length > 0) {
-  console.error('Missing required environment variables:', missingEnvVars.join(', '));
-  console.error('Please check your .env file at:', envPath);
+  logger.error('Missing required environment variables:', missingEnvVars.join(', '));
+  logger.error('Please check your .env file at:', envPath);
   process.exit(1);
 }
 
@@ -89,7 +90,14 @@ app.get('/', (req, res) => {
 
 // Catch-all route for undefined API routes
 app.use('/api/*', (req, res) => {
+  logger.warn(`404 - API endpoint not found: ${req.originalUrl}`);
   res.status(404).json({ message: 'API endpoint not found' });
+});
+
+// Global error handler (basic example)
+app.use((err, req, res, next) => {
+  logger.error('Unhandled error:', err);
+  res.status(500).json({ message: 'Internal Server Error' });
 });
 
 // Initialize database and start server
@@ -98,16 +106,17 @@ async function startServer() {
     // Initialize database
     const dbInitialized = await initializeDatabase();
     if (!dbInitialized) {
-      console.error('Failed to initialize database. Exiting...');
+      logger.error('Failed to initialize database. Exiting...');
       process.exit(1);
     }
     
     // Start server
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+      logger.info(`Access health check at http://localhost:${PORT}/api/health`);
     });
   } catch (error) {
-    console.error('Error starting server:', error);
+    logger.error('Error starting server:', error);
     process.exit(1);
   }
 }

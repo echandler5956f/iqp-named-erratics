@@ -1,6 +1,7 @@
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const logger = require('../utils/logger'); // Import logger
 
 /**
  * Service for executing Python scripts and processing results
@@ -13,12 +14,13 @@ class PythonService {
    * @returns {Promise<object>} - JSON result from the script
    */
   async runScript(scriptName, args = []) {
-    console.log(`[PythonService] runScript called for script: ${scriptName} with args: ${args.join(' ')}`);
+    logger.info(`[PythonService] Attempting to run script: ${scriptName}`, { args });
     // Build full path to the script
     const scriptPath = path.join(__dirname, '..', 'scripts', 'python', scriptName);
     
     // Check if the script exists
     if (!fs.existsSync(scriptPath)) {
+      logger.error(`[PythonService] Python script not found: ${scriptPath}`);
       throw new Error(`Python script not found: ${scriptPath}`);
     }
     
@@ -29,35 +31,45 @@ class PythonService {
     
     // Build the command
     const command = `${pythonCommand} "${scriptPath}" ${args.join(' ')}`;
-    console.log(`[PythonService] Executing command: ${command}`);
+    logger.debug(`[PythonService] Executing command: ${command}`);
     
     // Execute the command
     return new Promise((resolve, reject) => {
       exec(command, (error, stdout, stderr) => {
-        console.log(`[PythonService] exec callback for ${scriptName}. Error: ${error}, stdout length: ${stdout?.length}, stderr length: ${stderr?.length}`);
         if (error) {
-          console.error(`[PythonService] Error executing Python script: ${error.message}`);
-          console.error(`Command: ${command}`);
-          if (stderr) console.error(`stderr: ${stderr}`);
-          reject(error);
+          logger.error(`[PythonService] Error executing Python script '${scriptName}'`, {
+            message: error.message,
+            command,
+            stderr,
+            stdout,
+            stack: error.stack
+          });
+          reject(new Error(`Execution failed for script ${scriptName}: ${error.message}`));
           return;
         }
         
         if (stderr) {
-          // Log Python warnings/stderr but don't necessarily reject unless parse fails
-          console.warn(`[PythonService] Python script stderr/warnings for ${scriptName}:\n${stderr}`);
+          logger.warn(`[PythonService] Python script '${scriptName}' produced stderr output`, {
+            stderr,
+            command
+          });
         }
         
         try {
           // Try to parse the stdout as JSON
           const result = JSON.parse(stdout);
+          logger.info(`[PythonService] Successfully executed script '${scriptName}' and parsed JSON output.`);
+          logger.debug(`[PythonService] Script '${scriptName}' stdout (parsed)`, { result });
           resolve(result);
         } catch (parseError) {
-          console.error('[PythonService] Failed to parse Python script output as JSON:', parseError);
-          console.error('[PythonService] Raw stdout:', stdout);
-          // Include stderr in the error if available, as it might contain Python tracebacks or script errors
-          const errorMessage = `Invalid JSON output from Python script ${scriptName}. Parse Error: ${parseError.message}. stderr: ${stderr || 'N/A'}`;
-          reject(new Error(errorMessage));
+          logger.error(`[PythonService] Failed to parse JSON output from script '${scriptName}'`, {
+            parseErrorMessage: parseError.message,
+            stdout,
+            stderr,
+            command,
+            stack: parseError.stack
+          });
+          reject(new Error(`Invalid JSON output from Python script ${scriptName}: ${parseError.message}`));
         }
       });
     });
@@ -71,7 +83,7 @@ class PythonService {
    * @returns {Promise<object>} - Analysis results
    */
   async runProximityAnalysis(erraticId, featureLayers = [], updateDb = false) {
-    console.log(`[PythonService] runProximityAnalysis called for ID: ${erraticId}`);
+    logger.info(`[PythonService] Running proximity analysis for erratic ID: ${erraticId}`, { featureLayers, updateDb });
     // Build arguments
     const args = [erraticId.toString()];
     
@@ -94,6 +106,7 @@ class PythonService {
    * @returns {Promise<object>} - Classification results
    */
   async runClassification(erraticId, updateDb = false) {
+    logger.info(`[PythonService] Running classification for erratic ID: ${erraticId}`, { updateDb });
     // Build arguments
     const args = [erraticId.toString()];
     
@@ -115,6 +128,7 @@ class PythonService {
    * @returns {Promise<object>} - Clustering results
    */
   async runClusteringAnalysis(algorithm, featuresToCluster = [], algoParams = {}, outputToFile = false, outputFilename = 'clustering_results.json') {
+    logger.info('[PythonService] Running clustering analysis', { algorithm, featuresToCluster, algoParams, outputToFile, outputFilename });
     const args = ['--algorithm', algorithm];
 
     if (featuresToCluster.length > 0) {
@@ -138,6 +152,7 @@ class PythonService {
    * @returns {Promise<object>} - Result from the script (usually a log or status message).
    */
   async runBuildTopicModels(outputPath = 'build_topics_result.json') {
+    logger.info('[PythonService] Running build topic models', { outputPath });
     // The script expects an erratic_id, but it's not used for --build-topics. Use a placeholder.
     const placeholderErraticId = '1'; 
     const args = [

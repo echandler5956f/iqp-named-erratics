@@ -1,5 +1,5 @@
 const pythonService = require('../services/pythonService');
-const db = require('../models');
+const logger = require('../utils/logger');
 
 /**
  * Controller for spatial analysis operations
@@ -28,34 +28,37 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async getProximityAnalysis(req, res) {
-    console.log(`[AnalysisController] getProximityAnalysis called for ID: ${req.params.id}`);
+    const erraticId = parseInt(req.params.id, 10);
+    logger.info(`[AnalysisController] getProximityAnalysis called for ID: ${erraticId}`);
+
+    if (isNaN(erraticId)) {
+      logger.warn('[AnalysisController] Invalid erratic ID received for proximity analysis', { requestedId: req.params.id });
+      return res.status(400).json({ error: 'Invalid erratic ID' });
+    }
+    
+    // Extract feature layers from query
+    const featureLayers = req.query.features ? req.query.features.split(',') : [];
+    
+    // Determine if we should update the database
+    const updateDb = req.query.update === 'true';
+    
     try {
-      const erraticId = parseInt(req.params.id);
-      
-      if (isNaN(erraticId)) {
-        console.error('[AnalysisController] Invalid erratic ID:', req.params.id);
-        return res.status(400).json({ error: 'Invalid erratic ID' });
-      }
-      
-      // Extract feature layers from query
-      const featureLayers = req.query.features ? req.query.features.split(',') : [];
-      
-      // Determine if we should update the database
-      const updateDb = req.query.update === 'true';
-      
-      console.log(`[AnalysisController] Calling pythonService.runProximityAnalysis for ID: ${erraticId} with features: ${featureLayers.join(',')} and updateDb: ${updateDb}`);
+      logger.info(`[AnalysisController] Calling pythonService.runProximityAnalysis for ID: ${erraticId}`, { featureLayers, updateDb });
       const results = await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
-      console.log(`[AnalysisController] pythonService.runProximityAnalysis returned for ID: ${erraticId}. Results:`, JSON.stringify(results));
+      logger.info(`[AnalysisController] pythonService.runProximityAnalysis returned for ID: ${erraticId}`);
+      logger.debug('[AnalysisController] Proximity results:', { results });
       
       // Check for error in results
       if (results.error) {
-        return res.status(404).json({ error: results.error });
+        // Log specific error from pythonService if available
+        logger.warn(`[AnalysisController] Proximity analysis for ID ${erraticId} returned error from service`, { error: results.error });
+        return res.status(results.statusCode || 404).json({ error: results.error });
       }
       
       res.json(results);
     } catch (error) {
-      console.error('Error in proximity analysis:', error);
-      res.status(500).json({ error: error.message });
+      logger.error(`[AnalysisController] Error in getProximityAnalysis for ID ${erraticId}`, { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error in proximity analysis' });
     }
   }
   
@@ -65,58 +68,65 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async batchProximityAnalysis(req, res) {
+    logger.info('[AnalysisController] batchProximityAnalysis called', { body: req.body });
     try {
       // Extract erratic IDs from request body
       const { erraticIds, featureLayers, updateDb } = req.body;
       
       if (!Array.isArray(erraticIds) || erraticIds.length === 0) {
+        logger.warn('[AnalysisController] Invalid or empty erratic ID list for batch proximity', { erraticIds });
         return res.status(400).json({ error: 'Invalid or empty erratic ID list' });
       }
       
       // Start a background job for processing
-      res.json({ 
-        message: 'Batch analysis started', 
-        job_id: `batch_${Date.now()}`,
+      const jobId = `batch_proximity_${Date.now()}`;
+      logger.info(`[AnalysisController] Starting batch proximity analysis job ID: ${jobId}`, { count: erraticIds.length });
+      res.status(202).json({ 
+        message: 'Batch proximity analysis started', 
+        job_id: jobId,
         erratics_count: erraticIds.length
       });
       
       // Process erratics in background
-      this._processBatchAnalysis(erraticIds, featureLayers, updateDb)
-        .catch(error => console.error('Error in batch processing:', error));
+      this._processBatchAnalysis(jobId, erraticIds, featureLayers, updateDb)
+        .then(summary => logger.info(`[AnalysisController] Batch proximity analysis job ID ${jobId} completed.`, { summary }))
+        .catch(error => logger.error(`[AnalysisController] Error in background batch proximity processing for job ID ${jobId}`, { message: error.message, stack: error.stack }));
     } catch (error) {
-      console.error('Error starting batch analysis:', error);
-      res.status(500).json({ error: error.message });
+      logger.error('[AnalysisController] Error starting batch proximity analysis', { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error starting batch analysis' });
     }
   }
   
   /**
    * Process batch analysis in background
+   * @param {string} jobId - Job ID
    * @param {Array<number>} erraticIds - List of erratic IDs to process
    * @param {Array<string>} featureLayers - Feature layers to analyze
    * @param {boolean} updateDb - Whether to update the database
    * @private
    */
-  async _processBatchAnalysis(erraticIds, featureLayers = [], updateDb = true) {
-    const results = {
-      successful: [],
-      failed: []
-    };
+  async _processBatchAnalysis(jobId, erraticIds, featureLayers = [], updateDb = true) {
+    logger.info(`[AnalysisController] Background processing batch proximity analysis for job ID: ${jobId}`, { count: erraticIds.length });
+    const resultsSummary = { successful: 0, failed: 0, errors: [] };
     
     for (const erraticId of erraticIds) {
       try {
         const result = await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
         if (result.error) {
-          results.failed.push({ id: erraticId, error: result.error });
+          logger.warn(`[AnalysisController] Batch proximity failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
+          resultsSummary.failed++;
+          resultsSummary.errors.push({ id: erraticId, error: result.error });
         } else {
-          results.successful.push(erraticId);
+          resultsSummary.successful++;
         }
       } catch (error) {
-        results.failed.push({ id: erraticId, error: error.message });
+        logger.error(`[AnalysisController] Exception during batch proximity for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
+        resultsSummary.failed++;
+        resultsSummary.errors.push({ id: erraticId, error: error.message });
       }
     }
-    
-    console.log(`Batch analysis completed. Successful: ${results.successful.length}, Failed: ${results.failed.length}`);
-    return results;
+    logger.info(`[AnalysisController] Batch proximity processing finished for job ID: ${jobId}`, { resultsSummary });
+    return resultsSummary;
   }
   
   /**
@@ -125,28 +135,29 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async classifyErratic(req, res) {
+    const erraticId = parseInt(req.params.id, 10);
+    logger.info(`[AnalysisController] classifyErratic called for ID: ${erraticId}`);
+
+    if (isNaN(erraticId)) {
+      logger.warn('[AnalysisController] Invalid erratic ID received for classification', { requestedId: req.params.id });
+      return res.status(400).json({ error: 'Invalid erratic ID' });
+    }
+    const updateDb = req.query.update === 'true';
+
     try {
-      const erraticId = parseInt(req.params.id);
-      
-      if (isNaN(erraticId)) {
-        return res.status(400).json({ error: 'Invalid erratic ID' });
-      }
-      
-      // Determine if we should update the database
-      const updateDb = req.query.update === 'true';
-      
-      // Run the classification
+      logger.info(`[AnalysisController] Calling pythonService.runClassification for ID: ${erraticId}`, { updateDb });
       const results = await pythonService.runClassification(erraticId, updateDb);
-      
-      // Check for error in results
+      logger.info(`[AnalysisController] pythonService.runClassification returned for ID: ${erraticId}`);
+      logger.debug('[AnalysisController] Classification results:', { results });
+
       if (results.error) {
-        return res.status(404).json({ error: results.error });
+        logger.warn(`[AnalysisController] Classification for ID ${erraticId} returned error from service`, { error: results.error });
+        return res.status(results.statusCode || 404).json({ error: results.error });
       }
-      
       res.json(results);
     } catch (error) {
-      console.error('Error in erratic classification:', error);
-      res.status(500).json({ error: error.message });
+      logger.error(`[AnalysisController] Error in classifyErratic for ID ${erraticId}`, { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error in erratic classification' });
     }
   }
   
@@ -156,27 +167,32 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async batchClassifyErratics(req, res) {
+    logger.info('[AnalysisController] batchClassifyErratics called', { body: req.body });
     try {
       // Extract erratic IDs from request body
       const { erraticIds, updateDb } = req.body;
       
       if (!Array.isArray(erraticIds) || erraticIds.length === 0) {
+        logger.warn('[AnalysisController] Invalid or empty erratic ID list for batch classification', { erraticIds });
         return res.status(400).json({ error: 'Invalid or empty erratic ID list' });
       }
       
       // Start a background job for processing
-      res.json({ 
+      const jobId = `batch_classify_${Date.now()}`;
+      logger.info(`[AnalysisController] Starting batch classification job ID: ${jobId}`, { count: erraticIds.length });
+      res.status(202).json({ 
         message: 'Batch classification started', 
-        job_id: `batch_classify_${Date.now()}`,
+        job_id: jobId,
         erratics_count: erraticIds.length
       });
       
       // Process erratics in background
-      this._processBatchClassification(erraticIds, updateDb)
-        .catch(error => console.error('Error in batch classification:', error));
+      this._processBatchClassification(jobId, erraticIds, updateDb)
+        .then(summary => logger.info(`[AnalysisController] Batch classification job ID ${jobId} completed.`, { summary }))
+        .catch(error => logger.error(`[AnalysisController] Error in background batch classification for job ID ${jobId}`, { message: error.message, stack: error.stack }));
     } catch (error) {
-      console.error('Error starting batch classification:', error);
-      res.status(500).json({ error: error.message });
+      logger.error('[AnalysisController] Error starting batch classification', { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error starting batch classification' });
     }
   }
   
@@ -186,27 +202,28 @@ class AnalysisController {
    * @param {boolean} updateDb - Whether to update the database
    * @private
    */
-  async _processBatchClassification(erraticIds, updateDb = true) {
-    const results = {
-      successful: [],
-      failed: []
-    };
+  async _processBatchClassification(jobId, erraticIds, updateDb = true) {
+    logger.info(`[AnalysisController] Background processing batch classification for job ID: ${jobId}`, { count: erraticIds.length });
+    const resultsSummary = { successful: 0, failed: 0, errors: [] };
     
     for (const erraticId of erraticIds) {
       try {
         const result = await pythonService.runClassification(erraticId, updateDb);
         if (result.error) {
-          results.failed.push({ id: erraticId, error: result.error });
+          logger.warn(`[AnalysisController] Batch classification failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
+          resultsSummary.failed++;
+          resultsSummary.errors.push({ id: erraticId, error: result.error });
         } else {
-          results.successful.push(erraticId);
+          resultsSummary.successful++;
         }
       } catch (error) {
-        results.failed.push({ id: erraticId, error: error.message });
+        logger.error(`[AnalysisController] Exception during batch classification for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
+        resultsSummary.failed++;
+        resultsSummary.errors.push({ id: erraticId, error: error.message });
       }
     }
-    
-    console.log(`Batch classification completed. Successful: ${results.successful.length}, Failed: ${results.failed.length}`);
-    return results;
+    logger.info(`[AnalysisController] Batch classification processing finished for job ID: ${jobId}`, { resultsSummary });
+    return resultsSummary;
   }
 
   /**
@@ -215,6 +232,7 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async getClusterAnalysis(req, res) {
+    logger.info('[AnalysisController] getClusterAnalysis called', { query: req.query });
     try {
       const { 
         algorithm = 'dbscan', // Default algorithm
@@ -230,33 +248,35 @@ class AnalysisController {
         try {
           parsedAlgoParams = JSON.parse(algoParams);
         } catch (e) {
+          logger.warn('[AnalysisController] Invalid algoParams JSON string for clustering', { algoParams, error: e.message });
           return res.status(400).json({ error: 'Invalid algoParams JSON string' });
         }
       }
       const doOutputToFile = outputToFile === 'true';
+      const jobId = `cluster_analysis_${Date.now()}`;
 
-      // Respond quickly
-      res.json({ 
+      logger.info(`[AnalysisController] Starting clustering analysis job ID: ${jobId}`, { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename });
+      res.status(202).json({ 
         message: 'Clustering analysis job started', 
+        job_id: jobId,
         details: { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename }
       });
 
-      // Run clustering in the background
       pythonService.runClusteringAnalysis(algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename)
         .then(results => {
           if (results.error) {
-            console.error('Error in clustering analysis:', results.error, results.details || '');
+            logger.error(`[AnalysisController] Error in clustering analysis (Job ${jobId})`, { error: results.error, details: results.details });
           } else {
-            console.log('Clustering analysis completed successfully:', results);
+            logger.info(`[AnalysisController] Clustering analysis (Job ${jobId}) completed successfully.`, { results }); // Log full results on success for background job
           }
         })
         .catch(error => {
-          console.error('Failed to execute clustering analysis script:', error);
+          logger.error(`[AnalysisController] Failed to execute clustering analysis script (Job ${jobId})`, { message: error.message, stack: error.stack });
         });
 
     } catch (error) {
-      console.error('Error starting clustering analysis:', error);
-      res.status(500).json({ error: error.message });
+      logger.error('[AnalysisController] Error starting clustering analysis', { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error starting clustering analysis' });
     }
   }
 
@@ -266,31 +286,33 @@ class AnalysisController {
    * @param {object} res - Express response object
    */
   async triggerBuildTopicModels(req, res) {
+    logger.info('[AnalysisController] triggerBuildTopicModels called', { body: req.body });
     try {
       const { outputPath = 'build_topics_result.json' } = req.body;
+      const jobId = `build_topics_${Date.now()}`;
 
-      // Respond quickly
+      logger.info(`[AnalysisController] Starting topic model building job ID: ${jobId}`, { outputPath });
       res.status(202).json({ 
-        message: 'Topic model building process started', 
+        message: 'Topic model building process started',
+        job_id: jobId,
         details: { outputPath }
       });
 
-      // Run model building in the background
       pythonService.runBuildTopicModels(outputPath)
         .then(results => {
           if (results.error) {
-            console.error('Error in topic model building:', results.error, results.details || '');
+            logger.error(`[AnalysisController] Error in topic model building (Job ${jobId})`, { error: results.error, details: results.details });
           } else {
-            console.log('Topic model building completed successfully:', results);
+            logger.info(`[AnalysisController] Topic model building (Job ${jobId}) completed successfully.`, { results }); // Log full results on success
           }
         })
         .catch(error => {
-          console.error('Failed to execute topic model building script:', error);
+          logger.error(`[AnalysisController] Failed to execute topic model building script (Job ${jobId})`, { message: error.message, stack: error.stack });
         });
 
     } catch (error) {
-      console.error('Error starting topic model building:', error);
-      res.status(500).json({ error: error.message });
+      logger.error('[AnalysisController] Error starting topic model building', { message: error.message, stack: error.stack });
+      res.status(500).json({ error: error.message || 'Error starting topic model building' });
     }
   }
 }
