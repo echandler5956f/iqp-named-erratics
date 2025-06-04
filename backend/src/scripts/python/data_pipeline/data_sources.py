@@ -108,6 +108,7 @@ native_treaties = DataSource(
     output_dir='native'
 )
 
+# From US Department of Transportation
 natd_roads = DataSource(
     name='natd_roads',
     source_type='file',
@@ -116,6 +117,7 @@ natd_roads = DataSource(
     output_dir='roads'
 )
 
+# From US Forest Service
 forest_trails = DataSource(
     name='forest_trails',
     source_type='file',
@@ -124,60 +126,33 @@ forest_trails = DataSource(
     output_dir='trails'
 )
 
-elevation_gmted_n30_w90 = DataSource(
-    name='elevation_gmted_n30_w90',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N30W090_300/30n090w_20101117_gmted_mea300.tif'),
+# Single DataSource for all GMTED Tiled Elevation Data
+gmted_elevation_tiled = DataSource(
+    name='gmted_elevation_tiled',
+    source_type='file', # All tiles are local
     format='geotiff',
-    output_dir='elevation/GMTED2010N30W090_300'
-)
-
-elevation_gmted_n30_w120 = DataSource(
-    name='elevation_gmted_n30_w120',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N30W120_300/30n120w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N30W120_300'
-)
-
-elevation_gmted_n50_w60 = DataSource(
-    name='elevation_gmted_n50_w60',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N50W060_300/50n060w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N50W060_300'
-)
-
-elevation_gmted_n50_w90 = DataSource(
-    name='elevation_gmted_n50_w90',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N50W090_300/50n090w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N50W090_300'
-)
-
-elevation_gmted_n50_w120 = DataSource(
-    name='elevation_gmted_n50_w120',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N50W120_300/50n120w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N50W120_300'
-)
-
-elevation_gmted_n50_w150 = DataSource(
-    name='elevation_gmted_n50_w150',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N50W150_300/50n150w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N50W150_300'
-)
-
-elevation_gmted_n50_w180 = DataSource(
-    name='elevation_gmted_n50_w180',
-    source_type='file',
-    path=_local_path('elevation/GMTED2010N50W180_300/50n180w_20101117_gmted_mea300.tif'),
-    format='geotiff',
-    output_dir='elevation/GMTED2010N50W180_300'
+    is_tiled=True,
+    tile_paths=[
+        _local_path('elevation/GMTED2010N30W090_300/30n090w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N30W120_300/30n120w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N50W060_300/50n060w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N50W090_300/50n090w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N50W120_300/50n120w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N50W150_300/50n150w_20101117_gmted_mea300.tif'),
+        _local_path('elevation/GMTED2010N50W180_300/50n180w_20101117_gmted_mea300.tif'),
+    ],
+    tile_centers=[ # (lon, lat) for the CENTER of each tile
+        (-75.0, 45.0),   # Center for n30w090 tile
+        (-105.0, 45.0),  # Center for n30w120 tile
+        (-45.0, 65.0),   # Center for n50w060 tile
+        (-75.0, 65.0),   # Center for n50w090 tile
+        (-105.0, 65.0),  # Center for n50w120 tile
+        (-135.0, 65.0),  # Center for n50w150 tile
+        (-165.0, 65.0),  # Center for n50w180 tile
+    ],
+    tile_size_degrees=30.0,
+    output_dir='elevation/gmted_tiled_data', # General directory for this tiled source
+    description='Tiled GMTED2010 Mean Elevation data at 300 arc-seconds resolution.'
 )
 
 glcc_nademl = DataSource(
@@ -355,13 +330,7 @@ def register_all_sources():
         native_treaties,
         natd_roads,
         forest_trails,
-        elevation_gmted_n30_w90,
-        elevation_gmted_n30_w120,
-        elevation_gmted_n50_w60,
-        elevation_gmted_n50_w90,
-        elevation_gmted_n50_w120,
-        elevation_gmted_n50_w150,
-        elevation_gmted_n50_w180,
+        gmted_elevation_tiled,
         glcc_nademl,
         glcc_nabatsl20,
         glcc_naigbpl20,

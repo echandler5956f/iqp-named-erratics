@@ -37,21 +37,21 @@ if python_dir not in sys.path:
 # Attempt to import pipeline components
 PIPELINE_AVAILABLE = False
 try:
-    from data_pipeline.pipeline import DataPipeline
-    from data_pipeline.registry import DataRegistry # Main global registry instance
-    # Ensure data_sources are loaded, which populates the registry
-    import data_pipeline.data_sources 
+    # Import the global registry directly
+    from data_pipeline.registry import REGISTRY as GlobalDataRegistry
+    # Ensure data_sources are loaded once to populate the registry
+    import data_pipeline.data_sources
+    from data_pipeline.sources import DataSource
     PIPELINE_AVAILABLE = True
     # Configure logging here after basic imports are successful
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
-    logger.info("Successfully imported DataPipeline and DataRegistry. Pipeline available.")
+    logger.info("Successfully imported DataPipeline global REGISTRY. Pipeline available.")
 except ImportError as e:
     # Configure logging even on import error to log the failure
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
-    logger.error(f"Failed to import DataPipeline components: {e}. DEM loading via pipeline will fail.")
-    # RASTERIO_AVAILABLE might be True, but pipeline-based DEM loading will fail.
+    logger.error(f"Failed to import DataPipeline REGISTRY: {e}. DEM loading will fail.")
 
 
 # Earth radius in meters
@@ -209,8 +209,9 @@ def get_elevation_category(elevation: float) -> str:
 
 def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
     """
-    Loads the DEM tile path for a given point using the data pipeline.
-    The pipeline must be configured with a tiled DEM source (e.g., 'gmted_elevation_tiled').
+    Finds the local file path for the DEM tile that covers the given point.
+    It iterates through registered tiled DEM sources (specifically 'gmted_elevation_tiled')
+    and checks if the point falls within any tile's bounding box.
 
     Args:
         point: geo_utils.Point object (lon, lat) to find the corresponding DEM tile for.
@@ -218,46 +219,64 @@ def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
 
     Returns:
         File path to the DEM TIF file for the specific tile,
-        or None if pipeline unavailable, point not provided, or loading fails.
+        or None if the global registry is unavailable, point not provided, no covering tile found,
+        or the 'gmted_elevation_tiled' source is not configured correctly.
     """
-    if not PIPELINE_AVAILABLE:
-        logger.error("DataPipeline is not available. Cannot load DEM data.")
+    if not PIPELINE_AVAILABLE or GlobalDataRegistry is None:
+        logger.error("DataPipeline REGISTRY is not available. Cannot load DEM data.")
         return None
     if point is None:
         logger.warning("load_dem_data called without a specific point. Cannot determine DEM tile path.")
         return None
-    
-    # The registry is populated when data_pipeline.data_sources is imported.
-    # The DataPipeline instance uses this global registry by default if not passed another.
+
     try:
-        # Ensure a shared registry is used if it's being managed globally, otherwise instantiate.
-        # For this context, we assume the registry used by DataPipeline() is already populated.
-        pipeline = DataPipeline(registry=DataRegistry()) # Uses the global registry instance from data_pipeline.registry
+        target_tiled_source_name = "gmted_elevation_tiled"
+        gmted_source: Optional[DataSource] = None
+        for source_name, source_obj in GlobalDataRegistry.get_all_sources().items():
+            if source_name == target_tiled_source_name and source_obj.is_tiled:
+                gmted_source = source_obj
+                break
         
-        # The name of the tiled DEM source as defined in data_sources.py
-        tiled_dem_source_name = "gmted_elevation_tiled"
-        
-        logger.info(f"Attempting to load DEM tile for point {point} using source '{tiled_dem_source_name}' via pipeline.")
-        
-        # The pipeline's load method is expected to handle tile selection 
-        # when 'target_point' is passed in kwargs for a tiled source.
-        dem_tile_path = pipeline.load(tiled_dem_source_name, target_point=point)
-        
-        if dem_tile_path and isinstance(dem_tile_path, str) and os.path.exists(dem_tile_path):
-            logger.info(f"Successfully obtained DEM tile via pipeline: {dem_tile_path}")
-            return dem_tile_path
-        elif dem_tile_path: # Pipeline returned something, but it's not a valid existing path
-            logger.error(f"Pipeline returned DEM path '{dem_tile_path}', but it does not exist or is not a string.")
-            return None
-        else: # Pipeline returned None
-            logger.error(f"Pipeline failed to return a DEM path for {tiled_dem_source_name} at point {point}.")
+        if not gmted_source:
+            logger.error(f"Tiled DEM source '{target_tiled_source_name}' not found or not configured as tiled in the registry.")
             return None
 
-    except FileNotFoundError as fnf_err: # Catching specific error from pipeline if tile not found
-        logger.error(f"DEM tile not found for point {point} via pipeline: {fnf_err}")
+        if not gmted_source.tile_centers or not gmted_source.tile_paths or not gmted_source.tile_size_degrees:
+            logger.error(f"Tiled DEM source '{target_tiled_source_name}' is missing tile_centers, tile_paths, or tile_size_degrees.")
+            return None
+        
+        if len(gmted_source.tile_paths) != len(gmted_source.tile_centers):
+            logger.error(f"Mismatch in lengths of tile_paths and tile_centers for '{target_tiled_source_name}'.")
+            return None
+
+        logger.debug(f"Searching for DEM tile for point {point} in '{target_tiled_source_name}'.")
+        tile_size = gmted_source.tile_size_degrees
+        half_size = tile_size / 2.0
+
+        for i, center_coord in enumerate(gmted_source.tile_centers):
+            lon_c, lat_c = center_coord
+            
+            lat_min = lat_c - half_size
+            lat_max = lat_c + half_size
+            lon_min = lon_c - half_size
+            lon_max = lon_c + half_size
+
+            # Check if the point is within the tile bounds (inclusive min, exclusive max for standard geo queries)
+            if (lat_min <= point.latitude < lat_max and
+                lon_min <= point.longitude < lon_max):
+                tile_path = gmted_source.tile_paths[i]
+                if os.path.exists(tile_path):
+                    logger.info(f"Found DEM tile for point {point}: {tile_path}")
+                    return tile_path
+                else:
+                    logger.error(f"DEM tile path {tile_path} for point {point} does not exist on filesystem.")
+                    # Continue searching in case of misconfiguration, but this is an error.
+        
+        logger.warning(f"No covering DEM tile found in '{target_tiled_source_name}' for point {point}.")
         return None
+
     except Exception as e:
-        logger.error(f"Error loading DEM data for point {point} via data pipeline: {e}", exc_info=True)
+        logger.error(f"Error loading DEM data for point {point}: {e}", exc_info=True)
         return None
 
 def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[Optional[Dict], float]:

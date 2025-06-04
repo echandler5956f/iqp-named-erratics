@@ -59,12 +59,14 @@ def load_all_erratics_gdf() -> gpd.GeoDataFrame:
             e.*, 
             ea.usage_type, ea.cultural_significance_score, ea.has_inscriptions, 
             ea.accessibility_score, ea.size_category, ea.nearest_water_body_dist,
-            ea.nearest_settlement_dist, ea.nearest_colonial_settlement_dist,
-            ea.nearest_road_dist, ea.nearest_colonial_road_dist,
+            ea.nearest_settlement_dist, 
+            ea.nearest_road_dist, 
             ea.nearest_native_territory_dist, ea.elevation_category,
             ea.geological_type, ea.estimated_displacement_dist,
             ea.ruggedness_tri, ea.terrain_landform, ea.terrain_slope_position,
-            ea.vector_embedding
+            ea.vector_embedding,
+            ea.nearest_natd_road_dist, 
+            ea.nearest_forest_trail_dist 
         FROM "Erratics" e
         LEFT JOIN "ErraticAnalyses" ea ON e.id = ea."erraticId";
         """
@@ -125,12 +127,14 @@ def update_erratic_analysis_results(erratic_id: int, analysis_data: Dict[str, An
     allowed_fields = [
         'usage_type', 'cultural_significance_score', 'has_inscriptions',
         'accessibility_score', 'size_category', 'nearest_water_body_dist',
-        'nearest_settlement_dist', 'nearest_colonial_settlement_dist',
-        'nearest_road_dist', 'nearest_colonial_road_dist',
+        'nearest_settlement_dist', 
+        'nearest_road_dist', 
         'nearest_native_territory_dist', 'elevation_category',
         'geological_type', 'estimated_displacement_dist',
-        'vector_embedding', # Assuming pgvector handles list-to-vector conversion or it's pre-formatted
-        'ruggedness_tri', 'terrain_landform', 'terrain_slope_position'
+        'vector_embedding', 
+        'ruggedness_tri', 'terrain_landform', 'terrain_slope_position',
+        'nearest_natd_road_dist', 
+        'nearest_forest_trail_dist' 
     ]
 
     # Filter and prepare data
