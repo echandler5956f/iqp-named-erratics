@@ -5,10 +5,21 @@ This module registers all the GIS data sources used by the project.
 Adding a new data source is as simple as creating a DataSource object
 and registering it.
 """
-
+import os
 from .sources import DataSource
 from . import registry
 
+# Define a base path for locally stored GIS data to make paths relative
+_LOCAL_GIS_DATA_BASE_PATH = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), # Current dir: data_pipeline
+    '..',                     # Up to python/
+    'data',                   # Into data/
+    'gis'                     # Into gis/
+))
+
+def _local_path(relative_path_to_gis_subfolder: str) -> str:
+    """Constructs an absolute path to a file/folder within the project's local GIS data store."""
+    return os.path.join(_LOCAL_GIS_DATA_BASE_PATH, relative_path_to_gis_subfolder)
 
 # HydroSHEDS data sources
 hydrosheds_rivers = DataSource(
@@ -16,7 +27,7 @@ hydrosheds_rivers = DataSource(
     source_type='https',
     url='https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_na_shp.zip',
     format='shapefile',
-    output_dir='hydro'
+    output_dir='hydro/HydroRIVERS_v10_na_shp'
 )
 
 hydrosheds_lakes = DataSource(
@@ -24,7 +35,7 @@ hydrosheds_lakes = DataSource(
     source_type='https',
     url='https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip',
     format='shapefile',
-    output_dir='hydro'
+    output_dir='hydro/HydroLAKES_polys_v10_shp'
 )
 
 hydrosheds_basins = DataSource(
@@ -32,7 +43,7 @@ hydrosheds_basins = DataSource(
     source_type='https',
     url='https://data.hydrosheds.org/file/hydrobasins/standard/hybas_na_lev05_v1c.zip',
     format='shapefile',
-    output_dir='hydro'
+    output_dir='hydro/hybas_na_lev05_v1c'
 )
 
 # OpenStreetMap data sources
@@ -41,7 +52,7 @@ osm_north_america = DataSource(
     source_type='https',
     url='https://download.geofabrik.de/north-america-latest.osm.pbf',
     format='pbf',
-    output_dir='settlements',
+    output_dir='osm/north_america_pbf', # Specific for the PBF file itself
     params={
         'layer_type': 'points',
         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
@@ -53,7 +64,7 @@ osm_us = DataSource(
     source_type='https',
     url='https://download.geofabrik.de/north-america/us-latest.osm.pbf',
     format='pbf',
-    output_dir='settlements',
+    output_dir='osm/us_pbf',
     params={
         'layer_type': 'points',
         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
@@ -65,7 +76,7 @@ osm_canada = DataSource(
     source_type='https',
     url='https://download.geofabrik.de/north-america/canada-latest.osm.pbf',
     format='pbf',
-    output_dir='settlements',
+    output_dir='osm/canada_pbf',
     params={
         'layer_type': 'points',
         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
@@ -76,7 +87,7 @@ osm_canada = DataSource(
 native_territories = DataSource(
     name='native_territories',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/territories.geojson',
+    path=_local_path('native/territories.geojson'),
     format='geojson',
     output_dir='native'
 )
@@ -84,7 +95,7 @@ native_territories = DataSource(
 native_languages = DataSource(
     name='native_languages',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/languages.geojson',
+    path=_local_path('native/languages.geojson'),
     format='geojson',
     output_dir='native'
 )
@@ -92,7 +103,7 @@ native_languages = DataSource(
 native_treaties = DataSource(
     name='native_treaties',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/treaties.geojson',
+    path=_local_path('native/treaties.geojson'),
     format='geojson',
     output_dir='native'
 )
@@ -100,7 +111,7 @@ native_treaties = DataSource(
 natd_roads = DataSource(
     name='natd_roads',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/roads/North_American_Roads.shp',
+    path=_local_path('roads/North_American_Roads.shp'),
     format='shapefile',
     output_dir='roads'
 )
@@ -108,7 +119,7 @@ natd_roads = DataSource(
 forest_trails = DataSource(
     name='forest_trails',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/trails/National_Forest_System_Trails_(Feature_Layer).shp',
+    path=_local_path('trails/National_Forest_System_Trails_(Feature_Layer).shp'),
     format='shapefile',
     output_dir='trails'
 )
@@ -172,7 +183,7 @@ elevation_gmted_n50_w180 = DataSource(
 glcc_nademl = DataSource(
     name='nademl',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nademl.tif',
+    path=_local_path('glcc/nademl.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -180,7 +191,7 @@ glcc_nademl = DataSource(
 glcc_nabatsl20 = DataSource(
     name='nabatsl20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nabatsl20.tif',
+    path=_local_path('glcc/nabatsl20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -188,7 +199,7 @@ glcc_nabatsl20 = DataSource(
 glcc_naigbpl20 = DataSource(
     name='naigbpl20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naigbpl20.tif',
+    path=_local_path('glcc/naigbpl20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -196,7 +207,7 @@ glcc_naigbpl20 = DataSource(
 glcc_nalulcl20 = DataSource(
     name='nalulcl20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nalulcl20.tif',
+    path=_local_path('glcc/nalulcl20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -204,7 +215,7 @@ glcc_nalulcl20 = DataSource(
 glcc_nandviapr92l = DataSource(
     name='nandviapr92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandviapr92l.tif',
+    path=_local_path('glcc/nandviapr92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -212,7 +223,7 @@ glcc_nandviapr92l = DataSource(
 glcc_nandviaug92l = DataSource(
     name='nandviaug92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandviaug92l.tif',
+    path=_local_path('glcc/nandviaug92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -220,7 +231,7 @@ glcc_nandviaug92l = DataSource(
 glcc_nandvidec92l = DataSource(
     name='nandvidec92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvidec92l.tif',
+    path=_local_path('glcc/nandvidec92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -228,7 +239,7 @@ glcc_nandvidec92l = DataSource(
 glcc_nandvifeb93l = DataSource(
     name='nandvifeb93l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvifeb93l.tif',
+    path=_local_path('glcc/nandvifeb93l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -236,7 +247,7 @@ glcc_nandvifeb93l = DataSource(
 glcc_nandvijan93l = DataSource(
     name='nandvijan93l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvijan93l.tif',
+    path=_local_path('glcc/nandvijan93l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -244,7 +255,7 @@ glcc_nandvijan93l = DataSource(
 glcc_nandvijun92l = DataSource(
     name='nandvijun92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvijun92l.tif',
+    path=_local_path('glcc/nandvijun92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -252,7 +263,7 @@ glcc_nandvijun92l = DataSource(
 glcc_nandvimar93l = DataSource(
     name='nandvimar93l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvimar93l.tif',
+    path=_local_path('glcc/nandvimar93l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -260,7 +271,7 @@ glcc_nandvimar93l = DataSource(
 glcc_nandvimay92l = DataSource(
     name='nandvimay92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvimay92l.tif',
+    path=_local_path('glcc/nandvimay92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -268,7 +279,7 @@ glcc_nandvimay92l = DataSource(
 glcc_nandvinov92l = DataSource(
     name='nandvinov92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvinov92l.tif',
+    path=_local_path('glcc/nandvinov92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -276,7 +287,7 @@ glcc_nandvinov92l = DataSource(
 glcc_nandvioct92l = DataSource(
     name='nandvioct92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvioct92l.tif',
+    path=_local_path('glcc/nandvioct92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -284,7 +295,7 @@ glcc_nandvioct92l = DataSource(
 glcc_nandvisep92l = DataSource(
     name='nandvisep92l',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvisep92l.tif',
+    path=_local_path('glcc/nandvisep92l.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -292,7 +303,7 @@ glcc_nandvisep92l = DataSource(
 glcc_naogel20 = DataSource(
     name='naogel20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naogel20.tif',
+    path=_local_path('glcc/naogel20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -300,7 +311,7 @@ glcc_naogel20 = DataSource(
 glcc_nasbm2l20 = DataSource(
     name='nasbm2l20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nasbm2l20.tif',
+    path=_local_path('glcc/nasbm2l20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -308,7 +319,7 @@ glcc_nasbm2l20 = DataSource(
 glcc_naslcrl20 = DataSource(
     name='naslcrl20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naslcrl20.tif',
+    path=_local_path('glcc/naslcrl20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -316,7 +327,7 @@ glcc_naslcrl20 = DataSource(
 glcc_naurbanl = DataSource(
     name='naurbanl',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naurbanl.tif',
+    path=_local_path('glcc/naurbanl.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -324,7 +335,7 @@ glcc_naurbanl = DataSource(
 glcc_navll20 = DataSource(
     name='navll20',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/navll20.tif',
+    path=_local_path('glcc/navll20.tif'),
     format='geotiff',
     output_dir='glcc'
 )
@@ -376,6 +387,7 @@ def register_all_sources():
     for source in sources:
         registry.register(source)
 
+    print(f"[data_sources.py] Registered {len(sources)} data sources.")
 
 # Auto-register when module is imported
 register_all_sources() 

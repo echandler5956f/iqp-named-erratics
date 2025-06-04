@@ -24,33 +24,40 @@ try:
     RASTERIO_AVAILABLE = True
 except ImportError:
     RASTERIO_AVAILABLE = False
-    logging.warning("rasterio library not found. DEM processing functions will not be available.")
+    # Logger might not be configured yet, use print for this critical warning if it occurs early.
+    print("WARNING: rasterio library not found. DEM processing functions will not be available.")
 
-# Add the parent directory to sys.path to import utils
-# This assumes geo_utils.py is in backend/src/scripts/python/utils
-script_dir = os.path.dirname(os.path.abspath(__file__))
-utils_dir = os.path.dirname(script_dir) # Go up one level to python/
-src_dir = os.path.dirname(utils_dir) # Go up one level to src/
-if src_dir not in sys.path:
-    sys.path.append(src_dir)
+# Add the 'python' directory (which contains 'utils' and 'data_pipeline') to sys.path
+# to allow importing sibling packages like data_pipeline.
+script_dir = os.path.dirname(os.path.abspath(__file__)) # .../utils
+python_dir = os.path.dirname(script_dir) # .../python
+if python_dir not in sys.path:
+    sys.path.insert(0, python_dir)
 
-# Need to import from data_loader *after* modifying sys.path if structure demands it
-# Assuming standard structure where data_loader is importable after path adjustment
+# Attempt to import pipeline components
+PIPELINE_AVAILABLE = False
 try:
-    from python.utils.data_loader import download_and_extract_data, GIS_DATA_DIR, CACHE_DIR
-    DATA_LOADER_AVAILABLE = True
+    from data_pipeline.pipeline import DataPipeline
+    from data_pipeline.registry import DataRegistry # Main global registry instance
+    # Ensure data_sources are loaded, which populates the registry
+    import data_pipeline.data_sources 
+    PIPELINE_AVAILABLE = True
+    # Configure logging here after basic imports are successful
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.info("Successfully imported DataPipeline and DataRegistry. Pipeline available.")
 except ImportError as e:
-    DATA_LOADER_AVAILABLE = False
-    logging.error(f"Failed to import data_loader: {e}. DEM loading will fail.")
+    # Configure logging even on import error to log the failure
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to import DataPipeline components: {e}. DEM loading via pipeline will fail.")
+    # RASTERIO_AVAILABLE might be True, but pipeline-based DEM loading will fail.
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # Earth radius in meters
 EARTH_RADIUS = 6371000
 
-class Point:
+class Point: # This is the GeoPoint class used by the pipeline now if imported successfully
     """
     Simple class to represent a geographic point with lon/lat coordinates.
     """
@@ -67,7 +74,7 @@ class Point:
         return (self.longitude, self.latitude)
     
     def __str__(self) -> str:
-        return f"Point({self.longitude}, {self.latitude})"
+        return f"Point(lon={self.longitude}, lat={self.latitude})"
     
     def __repr__(self) -> str:
         return self.__str__()
@@ -202,92 +209,56 @@ def get_elevation_category(elevation: float) -> str:
 
 def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
     """
-    Ensures the required SRTM 90m tile for a given point is downloaded 
-    and returns the path to that specific tile file.
-    Requires data_loader to be available.
+    Loads the DEM tile path for a given point using the data pipeline.
+    The pipeline must be configured with a tiled DEM source (e.g., 'gmted_elevation_tiled').
 
     Args:
-        point: Optional Point object (lon, lat) to find the corresponding tile for.
-               If None, attempts to download all NA tiles but returns None (as specific tile unknown).
+        point: geo_utils.Point object (lon, lat) to find the corresponding DEM tile for.
+               If None, this function cannot determine a specific tile and will return None.
 
     Returns:
-        File path to the downloaded DEM TIF file for the specific tile,
-        or None if download fails, data_loader unavailable, or point not provided.
+        File path to the DEM TIF file for the specific tile,
+        or None if pipeline unavailable, point not provided, or loading fails.
     """
-    if not DATA_LOADER_AVAILABLE:
-        logger.error("data_loader is not available. Cannot download DEM.")
+    if not PIPELINE_AVAILABLE:
+        logger.error("DataPipeline is not available. Cannot load DEM data.")
         return None
-
-    data_key = 'elevation_srtm90_csi'
-    # Try SRTM data first
-    srtm_success = False
-    if point and (-60 <= point.latitude <= 60):
-        # Point is within SRTM coverage range
-        # Call download_and_extract_data which now handles fetching all necessary tiles for NA
-        # It returns the base directory where tiles are stored.
-        dem_base_dir = download_and_extract_data(data_key, point=point)
-        
-        if dem_base_dir:
-            srtm_success = True
-            
-            # Calculate the expected tile name for the given point
-            lon = point.longitude
-            lat = point.latitude
-            
-            # Calculate bottom-left corner of the 5x5 tile containing the point
-            tile_lon_corner = math.floor(lon / 5) * 5
-            tile_lat_corner = math.floor(lat / 5) * 5
-            
-            # Determine tile indices based on CGIAR V4.1 convention
-            tile_lon_idx = (tile_lon_corner + 180) // 5 + 1
-            tile_lat_idx = (tile_lat_corner + 60) // 5 + 1
-            tile_base_name = f"srtm_{tile_lon_idx:02d}_{tile_lat_idx:02d}"
-            expected_tif_name = f"{tile_base_name}.tif"
-            expected_tif_path = os.path.join(dem_base_dir, expected_tif_name)
-
-            # Check if the specific required tile exists after the download attempt
-            if os.path.exists(expected_tif_path):
-                logger.info(f"Using DEM tile: {expected_tif_path} for point {point}")
-                return expected_tif_path
-            else:
-                logger.error(f"Required DEM tile {expected_tif_name} not found in {dem_base_dir} after download attempt.")
-                srtm_success = False
+    if point is None:
+        logger.warning("load_dem_data called without a specific point. Cannot determine DEM tile path.")
+        return None
     
-    # SRTM fallback for points outside coverage (high latitudes >60° or <-60°)
-    if point and not srtm_success:
-        logger.warning(f"Point {point} is outside SRTM 90m latitude coverage (-60 to 60) or tile download failed.")
+    # The registry is populated when data_pipeline.data_sources is imported.
+    # The DataPipeline instance uses this global registry by default if not passed another.
+    try:
+        # Ensure a shared registry is used if it's being managed globally, otherwise instantiate.
+        # For this context, we assume the registry used by DataPipeline() is already populated.
+        pipeline = DataPipeline(registry=DataRegistry()) # Uses the global registry instance from data_pipeline.registry
         
-        # Try alternate DEM source if available - this key should be in DATA_URLS in data_loader.py
-        alt_data_key = 'elevation_dem_na'  # Assuming this is defined in data_loader
-        logger.info(f"Attempting to use alternate DEM source: {alt_data_key}")
+        # The name of the tiled DEM source as defined in data_sources.py
+        tiled_dem_source_name = "gmted_elevation_tiled"
         
-        try:
-            alt_dem_dir = download_and_extract_data(alt_data_key, point=point)
-            if alt_dem_dir:
-                # Search for a DEM file that could cover our point
-                dem_files = []
-                for root, _, files in os.walk(alt_dem_dir):
-                    for file in files:
-                        if file.lower().endswith(('.tif', '.tiff', '.asc', '.dem')):
-                            dem_files.append(os.path.join(root, file))
-                
-                if dem_files:
-                    # For simplicity, we'll just use the first DEM file found
-                    # A more sophisticated approach would check each file's bounds
-                    logger.info(f"Using alternate DEM file: {dem_files[0]}")
-                    return dem_files[0]
-            
-            logger.warning(f"No alternate DEM data available for point {point}.")
+        logger.info(f"Attempting to load DEM tile for point {point} using source '{tiled_dem_source_name}' via pipeline.")
+        
+        # The pipeline's load method is expected to handle tile selection 
+        # when 'target_point' is passed in kwargs for a tiled source.
+        dem_tile_path = pipeline.load(tiled_dem_source_name, target_point=point)
+        
+        if dem_tile_path and isinstance(dem_tile_path, str) and os.path.exists(dem_tile_path):
+            logger.info(f"Successfully obtained DEM tile via pipeline: {dem_tile_path}")
+            return dem_tile_path
+        elif dem_tile_path: # Pipeline returned something, but it's not a valid existing path
+            logger.error(f"Pipeline returned DEM path '{dem_tile_path}', but it does not exist or is not a string.")
             return None
-        except Exception as e:
-            logger.error(f"Error obtaining alternate DEM data: {e}")
+        else: # Pipeline returned None
+            logger.error(f"Pipeline failed to return a DEM path for {tiled_dem_source_name} at point {point}.")
             return None
-    
-    # Generic case where no point is provided or all attempts failed
-    if not point:
-        logger.warning("load_dem_data called without a specific point. Cannot determine correct tile path.")
-    
-    return None
+
+    except FileNotFoundError as fnf_err: # Catching specific error from pipeline if tile not found
+        logger.error(f"DEM tile not found for point {point} via pipeline: {fnf_err}")
+        return None
+    except Exception as e:
+        logger.error(f"Error loading DEM data for point {point} via data pipeline: {e}", exc_info=True)
+        return None
 
 def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[Optional[Dict], float]:
     """
@@ -329,7 +300,7 @@ def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[
                  # Fallback if ID doesn't match index or 'id' column
                  # This case might indicate an issue in how feature_id was generated/stored.
                  logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame index or 'id' column.")
-                 pass # No reliable way to get full feature data
+                 # Pass, feature_data remains None
 
         except Exception as e:
              logger.error(f"Error retrieving feature data for identifier {feature_identifier}: {e}")
@@ -337,7 +308,7 @@ def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[
     # Use standard dict to avoid serialization issues with geometry
     # Convert geometry to WKT or remove if present
     if feature_data:
-        if 'geometry' in feature_data:
+        if 'geometry' in feature_data and hasattr(feature_data['geometry'], 'wkt'):
             try:
                 # Store WKT representation instead of Shapely object for JSON compatibility
                 feature_data['geometry_wkt'] = feature_data['geometry'].wkt 
@@ -387,11 +358,19 @@ def find_nearest_feature_db(point: Point, conn, table_name: str, geom_col: str,
                 select_cols.extend(safe_attrs)
             
             # Ensure unique columns and quote them
-            select_cols = list(dict.fromkeys(select_cols)) 
-            select_clause = ", ".join([f'"{c}"' for c in select_cols]) 
+            # Quote with f'"{{c}}"' if c is not already quoted, else c
+            quoted_select_cols = []
+            for c in list(dict.fromkeys(select_cols)):
+                if not (c.startswith('"') and c.endswith('"')):
+                    quoted_select_cols.append(f'"{c}"')
+                else:
+                    quoted_select_cols.append(c)
+            select_clause = ", ".join(quoted_select_cols)
 
             # Use ST_MakePoint for the input point and ST_DistanceSphere for distance
             # Order by the KNN operator (<->) for efficiency with a spatial index
+            # Ensure table_name and geom_col are properly quoted if they might contain special chars or be case sensitive
+            # For simplicity, assuming they are standard identifiers here or already quoted if needed passed in.
             query = f""" 
                 SELECT 
                     {select_clause},
@@ -455,7 +434,7 @@ def get_elevation_at_point(point: Point, dem_path: str) -> Optional[float]:
             # If the DEM is not EPSG:4326, we need to transform the point coords.
             # For simplicity here, we assume the DEM is EPSG:4326 or compatible.
             # A robust implementation would check src.crs and transform if needed.
-            if str(src.crs).lower() != 'epsg:4326':
+            if src.crs and str(src.crs).lower() != 'epsg:4326': # Check if src.crs is not None
                 logger.warning(f"DEM CRS ({src.crs}) is not EPSG:4326. Elevation sampling might be inaccurate without coordinate transformation.")
                 # Add coordinate transformation logic here if necessary
             
@@ -465,12 +444,12 @@ def get_elevation_at_point(point: Point, dem_path: str) -> Optional[float]:
             try:
                 elevation_value = next(value_generator)[0] # Get value from the first band
             except StopIteration:
-                logger.warning(f"Point {point} seems to be outside the DEM bounds.")
+                logger.warning(f"Point {point} seems to be outside the DEM bounds of {dem_path}.")
                 return None
 
             # Check for nodata value
             if src.nodata is not None and elevation_value == src.nodata:
-                logger.warning(f"Point {point} falls on a nodata value in the DEM.")
+                logger.warning(f"Point {point} falls on a nodata value in the DEM {dem_path}.")
                 return None
                 
             return float(elevation_value)
@@ -531,7 +510,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
         logger.warning("rasterio not available, cannot calculate landscape metrics.")
         return {}
     if not dem_path or not os.path.exists(dem_path):
-        logger.error(f"DEM file not found at {dem_path}")
+        logger.error(f"DEM file not found at {dem_path} for landscape metrics.")
         return {}
 
     metrics = {
@@ -548,7 +527,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
             # A more accurate way uses the transform and CRS properties.
             pixel_size_x = src.res[0]
             pixel_size_y = src.res[1]
-            if src.crs.is_geographic:
+            if src.crs and src.crs.is_geographic: # Check if src.crs is not None
                 # Approximation: degrees per meter varies with latitude
                 m_per_deg_lat = 111132.954 - 559.822 * math.cos(2 * math.radians(point.latitude)) + 1.175 * math.cos(4 * math.radians(point.latitude))
                 m_per_deg_lon = 111320 * math.cos(math.radians(point.latitude))
@@ -556,12 +535,19 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
                 radius_deg_y = radius_m / m_per_deg_lat
                 radius_px_x = int(radius_deg_x / abs(pixel_size_x))
                 radius_px_y = int(radius_deg_y / abs(pixel_size_y))
-            else: # Projected CRS
+            elif src.crs: # Projected CRS, check if src.crs is not None
                 radius_px_x = int(radius_m / abs(pixel_size_x))
                 radius_px_y = int(radius_m / abs(pixel_size_y))
+            else: # CRS is None
+                logger.warning(f"DEM {dem_path} has no CRS. Cannot reliably convert radius to pixels.")
+                return metrics
                 
             # Get pixel coordinates of the point
-            row, col = src.index(point.longitude, point.latitude)
+            try:
+                row, col = src.index(point.longitude, point.latitude)
+            except rasterio.errors.RasterioIOError: # Handles point outside bounds
+                logger.warning(f"Point {point} is outside the bounds of DEM {dem_path}. Cannot calculate landscape metrics.")
+                return metrics
             
             # Define the window
             # Ensure window stays within raster bounds
@@ -583,7 +569,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
                 valid_data = window_data.flatten() # Assume all data is valid if nodata not defined
                 
             if valid_data.size == 0:
-                logger.warning(f"No valid DEM data found in window around {point}")
+                logger.warning(f"No valid DEM data found in window around {point} in {dem_path}")
                 return metrics # Return NaNs
 
             # Calculate basic stats
@@ -600,7 +586,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
                      tri_window_data = tri_window_data.astype(float)
                 metrics['ruggedness_tri'] = calculate_terrain_ruggedness_index(tri_window_data)
             else:
-                logger.warning(f"Point {point} is too close to DEM edge to calculate 3x3 TRI.")
+                logger.warning(f"Point {point} is too close to DEM edge ({dem_path}) to calculate 3x3 TRI.")
 
             # Placeholder: More complex metrics like slope, aspect would require dedicated libraries or algorithms
             # e.g., using numpy.gradient or richdem
@@ -628,7 +614,7 @@ def determine_geomorphological_context(point: Point, dem_path: str) -> Dict[str,
         logger.warning("rasterio not available, cannot determine geomorph context.")
         return {}
     if not dem_path or not os.path.exists(dem_path):
-        logger.error(f"DEM file not found at {dem_path}")
+        logger.error(f"DEM file not found at {dem_path} for geomorphological context.")
         return {}
 
     context = {

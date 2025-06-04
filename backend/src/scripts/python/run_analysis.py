@@ -11,7 +11,7 @@ import sys
 import argparse
 import subprocess
 import logging
-from typing import List
+from typing import List, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -159,19 +159,32 @@ def run_classification(erratic_id: int, build_topics: bool = True, update_db: bo
         logger.error(f"Classification failed: {e}")
         return False
 
-def run_clustering(output_file: str = None, verbose: bool = False):
-    """Run clustering analysis for all erratics."""
-    script_path = os.path.join(SCRIPT_DIR, 'proximity_analysis.py')
+def run_clustering(algorithm: str, output_file: str, verbose: bool = False, 
+                   k: Optional[int] = None, features: Optional[List[str]] = None, 
+                   eps: Optional[float] = None, min_samples: Optional[int] = None, 
+                   metric: Optional[str] = None, linkage: Optional[str] = None):
+    """Run clustering analysis for all erratics using the specified algorithm and parameters."""
+    script_path = os.path.join(SCRIPT_DIR, 'clustering.py')
     
-    cmd = [sys.executable, script_path, '0', '--cluster-analysis']
+    cmd = [sys.executable, script_path, '--algorithm', algorithm, '--output', output_file]
     
-    if output_file:
-        cmd.extend(['--output', output_file])
+    if k is not None:
+        cmd.extend(['--k', str(k)])
+    if features:
+        cmd.extend(['--features'] + features)
+    if eps is not None:
+        cmd.extend(['--eps', str(eps)])
+    if min_samples is not None:
+        cmd.extend(['--min_samples', str(min_samples)])
+    if metric:
+        cmd.extend(['--metric', metric])
+    if linkage:
+        cmd.extend(['--linkage', linkage])
     
     if verbose:
         cmd.append('--verbose')
     
-    logger.info("Running clustering analysis for all erratics")
+    logger.info(f"Running clustering analysis ({algorithm}) for all erratics")
     logger.debug(f"Command: {' '.join(cmd)}")
     
     try:
@@ -225,7 +238,16 @@ def main():
     
     # Clustering parser
     cluster_parser = subparsers.add_parser('cluster', help='Run clustering analysis for all erratics')
-    cluster_parser.add_argument('--output', type=str, help='Output file for results (JSON)')
+    cluster_parser.add_argument('--algorithm', type=str, default='dbscan', choices=['dbscan', 'kmeans', 'hierarchical'], help='Clustering algorithm to use (default: dbscan)')
+    cluster_parser.add_argument('--output', type=str, required=True, help='Output file for results (JSON)')
+    # K-Means / Hierarchical args
+    cluster_parser.add_argument('--k', type=int, help='K-Means/Hierarchical: Number of clusters.')
+    cluster_parser.add_argument('--features', nargs='+', help='Features for clustering (e.g., longitude latitude, vector_embedding). Default varies by algorithm.')
+    cluster_parser.add_argument('--linkage', type=str, choices=['ward', 'complete', 'average', 'single'], help='Hierarchical: Linkage criterion (default: ward).')
+    # DBSCAN args
+    cluster_parser.add_argument('--eps', type=float, help='DBSCAN: Epsilon parameter. Auto-estimated if not provided.')
+    cluster_parser.add_argument('--min_samples', type=int, help='DBSCAN: Minimum number of samples (default: 3).')
+    cluster_parser.add_argument('--metric', type=str, choices=['auto', 'haversine', 'euclidean', 'cosine'], help='DBSCAN: Distance metric (default: auto).')
     cluster_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     # Environment test parser
@@ -258,8 +280,15 @@ def main():
         )
     elif args.command == 'cluster':
         success = run_clustering(
-            args.output,
-            args.verbose
+            algorithm=args.algorithm,
+            output_file=args.output,
+            verbose=args.verbose,
+            k=args.k,
+            features=args.features,
+            eps=args.eps,
+            min_samples=args.min_samples,
+            metric=args.metric,
+            linkage=args.linkage
         )
     elif args.command == 'test-env':
         success = run_environment_test(args.verbose)

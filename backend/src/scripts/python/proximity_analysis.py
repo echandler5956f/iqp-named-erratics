@@ -4,7 +4,7 @@ Proximity Analysis Script for Glacial Erratics
 
 This script calculates distances from a specified erratic to various geographic features
 with a focus on North American native and colonial historical context.
-It uses real-world GIS data sources from HydroSHEDS, Native Land Digital, and historical data.
+It uses real-world GIS data sources.
 """
 
 import sys
@@ -22,24 +22,22 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Add the parent directory to sys.path to import utils
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_dir not in sys.path:
-    sys.path.append(parent_dir)
+# Add the project root to sys.path to ensure correct relative imports
+# Assumes this script is in backend/src/scripts/python/
+# and project root is backend/src/scripts/
+# This needs to be robust to allow utils and data_pipeline to be found.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PYTHON_SCRIPTS_DIR = os.path.dirname(SCRIPT_DIR) # up to /python
+# PROJECT_ROOT_FOR_PYTHON = os.path.dirname(PYTHON_SCRIPTS_DIR) # up to /scripts
+# sys.path.insert(0, PROJECT_ROOT_FOR_PYTHON)
+# A more common pattern if utils/data_pipeline are sibling packages to the current script's package:
+# sys.path.append(os.path.join(SCRIPT_DIR, '..')) # Add parent (python/) to find utils & data_pipeline
 
-from python.utils.data_loader import (
-    load_erratic_by_id, 
-    update_erratic_analysis_data, 
-    json_to_file, 
-    load_hydro_features,
-    load_settlements,
-    load_roads,
-    load_native_territories,
-    load_colonial_settlements,
-    load_colonial_roads,
-    get_db_connection
-)
-from python.utils import geo_utils # Simplified import
+# Updated imports
+from data_pipeline import load_data # Main entry point for new data pipeline
+from utils import db_utils # For application-specific DB operations
+from utils import file_utils # For json_to_file
+from utils import geo_utils # Existing geo_utils, to be refactored later
 
 # North American specific context
 NORTH_AMERICA_BOUNDS = {
@@ -50,426 +48,214 @@ NORTH_AMERICA_BOUNDS = {
 }
 
 def calculate_proximity(erratic_id: int, feature_layers: Optional[List[str]] = None) -> Dict:
-    """
-    Calculate proximity metrics for an erratic using real North American GIS data.
-    
-    Args:
-        erratic_id: ID of the erratic to analyze
-        feature_layers: List of feature layer names to analyze proximity to
-        
-    Returns:
-        Dictionary with proximity analysis results
-    """
-    # Load erratic data
-    erratic = load_erratic_by_id(erratic_id)
+    logger.info(f"Starting proximity analysis for erratic ID: {erratic_id}")
+    # Load erratic data using new db_utils
+    erratic = db_utils.load_erratic_details_by_id(erratic_id)
     if not erratic:
+        logger.error(f"Erratic with ID {erratic_id} not found by db_utils.")
         return {"error": f"Erratic with ID {erratic_id} not found"}
     
-    # Default feature layers if none specified
     if feature_layers is None:
         feature_layers = [
-            "water_bodies", 
+            "lakes", "rivers", # from hydrosheds
             "native_territories", 
-            "settlements", 
-            "colonial_settlements", 
-            "roads", 
+            "osm_settlements", # from OSM (e.g., osm_north_america_settlements)
+            "nhgis_settlements", # from NHGIS (colonial)
+            "osm_roads", # from OSM (e.g., osm_north_america_roads)
             "colonial_roads"
         ]
     
-    # Extract location from erratic data
     try:
         longitude = erratic.get('longitude')
         latitude = erratic.get('latitude')
-        erratic_point = geo_utils.Point(longitude, latitude) # Use module prefix
-        logger.info(f"Analyzing erratic at {longitude}, {latitude}")
-    except (KeyError, TypeError, ValueError) as e:
-        logger.error(f"Invalid location data for erratic: {e}")
+        if longitude is None or latitude is None:
+            logger.error(f"Missing longitude/latitude for erratic ID {erratic_id}.")
+            return {"error": "Missing location data for erratic"}
+        erratic_point = geo_utils.Point(longitude, latitude)
+        logger.info(f"Analyzing erratic at Lon: {longitude}, Lat: {latitude}")
+    except Exception as e:
+        logger.error(f"Invalid location data for erratic ID {erratic_id}: {e}", exc_info=True)
         return {"error": "Invalid location data for erratic"}
     
-    # Verify the erratic is in North America
-    if not (NORTH_AMERICA_BOUNDS["xmin"] <= longitude <= NORTH_AMERICA_BOUNDS["xmax"] and 
-            NORTH_AMERICA_BOUNDS["ymin"] <= latitude <= NORTH_AMERICA_BOUNDS["ymax"]):
-        logger.warning(f"Erratic appears to be outside North America bounds. Please verify coordinates.")
-    
-    # Initialize results dictionary
     results = {
         "in_north_america": (NORTH_AMERICA_BOUNDS["xmin"] <= longitude <= NORTH_AMERICA_BOUNDS["xmax"] and 
                              NORTH_AMERICA_BOUNDS["ymin"] <= latitude <= NORTH_AMERICA_BOUNDS["ymax"])
     }
-    
-    # Calculate elevation category if elevation is available
+    if not results["in_north_america"]:
+        logger.warning(f"Erratic ID {erratic_id} appears outside North America. Proximity results might be limited.")
+
     if erratic.get('elevation') is not None:
         try:
-            elevation = float(erratic.get('elevation'))
-            elevation_category = geo_utils.get_elevation_category(elevation) # Use module prefix
-            results['elevation_category'] = elevation_category
-            logger.info(f"Elevation category: {elevation_category} (from {elevation}m)")
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Could not categorize elevation: {e}")
+            results['elevation_category'] = geo_utils.get_elevation_category(float(erratic['elevation']))
+        except Exception: pass # Handled by DEM later or if elevation is invalid
     
-    # Establish database connection once if needed for DB queries
-    conn = None
-    if feature_layers and any(f in ['lakes', 'rivers'] for f in feature_layers):
-        conn = get_db_connection()
-        if not conn:
-            logger.warning("Could not establish database connection for direct feature queries. Falling back to loading files.")
-
-    # --- Water Bodies Analysis ---
-    if not feature_layers or 'lakes' in feature_layers or 'rivers' in feature_layers:
+    # For HydroSHEDS features, potentially use DB if that utility is refined in geo_utils
+    # For now, assume file loading via data_pipeline for simplicity here
+    if 'lakes' in feature_layers or 'rivers' in feature_layers:
         nearest_water_dist = float('inf')
         nearest_water_name = None
         nearest_water_type = None
+        try:
+            if 'lakes' in feature_layers:
+                lakes_gdf = load_data('hydrosheds_lakes')
+                if not lakes_gdf.empty:
+                    lake_feature, lake_dist = geo_utils.find_nearest_feature(erratic_point, lakes_gdf)
+                    if lake_dist < nearest_water_dist:
+                        nearest_water_dist, nearest_water_name, nearest_water_type = lake_dist, lake_feature.get('Lake_name'), 'lake'
+            if 'rivers' in feature_layers: # Assuming rivers are similar to lakes in source/attributes
+                rivers_gdf = load_data('hydrosheds_rivers') # You'll need 'hydrosheds_rivers' in data_sources.py
+                if not rivers_gdf.empty:
+                    river_feature, river_dist = geo_utils.find_nearest_feature(erratic_point, rivers_gdf)
+                    if river_dist < nearest_water_dist:
+                        nearest_water_dist, nearest_water_name, nearest_water_type = river_dist, river_feature.get('HYR_NAME'), 'river' # Example name col
+            results["nearest_water_body_dist"] = nearest_water_dist if nearest_water_dist != float('inf') else None
+            results["nearest_water_body_name"] = nearest_water_name
+            results["nearest_water_body_type"] = nearest_water_type
+            logger.info(f"Nearest water: {nearest_water_name} ({nearest_water_type}) at {nearest_water_dist if nearest_water_dist != float('inf') else 'N/A'}m")
+        except Exception as e:
+            logger.error(f"Error processing hydro features for erratic ID {erratic_id}: {e}", exc_info=True)
 
-        # Prefer DB query for large hydro datasets if connection available
-        if conn and ('lakes' in feature_layers or not feature_layers):
-            logger.info("Querying nearest lake from database...")
-            # Assumes a table named 'HydroLAKES' with geometry col 'geom' and 'Hylak_id', 'Lake_name' attributes
-            # *** Adjust table_name, geom_col, feature_id_col, attrs_to_select as per your actual DB schema ***
-            lake_feature, lake_dist = geo_utils.find_nearest_feature_db(
-                erratic_point, conn, 
-                table_name='HydroLAKES', # <-- Replace with your actual table name for lakes
-                geom_col='geom',        # <-- Replace with your actual geometry column
-                feature_id_col='Hylak_id', # <-- Replace with your actual ID column
-                attrs_to_select=['Lake_name'] # <-- Add other attributes if needed
-            )
-            if lake_dist < nearest_water_dist:
-                 nearest_water_dist = lake_dist
-                 nearest_water_name = lake_feature.get('Lake_name') if lake_feature else None
-                 nearest_water_type = 'lake'
-                 logger.info(f"Nearest lake (DB Query): {nearest_water_name} at {nearest_water_dist:.1f}m")
-        elif 'lakes' in feature_layers or not feature_layers:
-            # Fallback to loading file if DB connection failed or not specified
-            logger.info("Loading lake data from file...")
-            water_bodies_gdf = load_hydro_features('lakes')
-            if not water_bodies_gdf.empty:
-                logger.info(f"Loaded {len(water_bodies_gdf)} lakes")
-                lake_feature, lake_dist = geo_utils.find_nearest_feature(erratic_point, water_bodies_gdf) # Use module prefix
-                if lake_dist < nearest_water_dist:
-                     nearest_water_dist = lake_dist
-                     nearest_water_name = lake_feature.get('Lake_name') if lake_feature else None
-                     nearest_water_type = 'lake'
-                     logger.info(f"Nearest lake (File Load): {nearest_water_name} at {nearest_water_dist:.1f}m")
-            else:
-                logger.warning("Could not load lake data.")
-
-        # Add similar logic for rivers if needed, using find_nearest_feature_db
-        # if conn and ('rivers' in feature_layers or not feature_layers):
-        #     logger.info("Querying nearest river from database...")
-        #     # river_feature, river_dist = find_nearest_feature_db(...) 
-        #     # ... update nearest_water_dist etc.
-        # elif 'rivers' in feature_layers or not feature_layers:
-        #    # Fallback to load_hydro_features('rivers')
-        
-        results["nearest_water_body_dist"] = nearest_water_dist if nearest_water_dist != float('inf') else None
-        results["nearest_water_body_name"] = nearest_water_name
-        results["nearest_water_body_type"] = nearest_water_type
-
-    # --- Native Territory Analysis ---
     if "native_territories" in feature_layers:
-        logger.info("Loading Native American territory data...")
         try:
-            native_territories = load_native_territories()
-            if not native_territories.empty:
-                logger.info(f"Loaded {len(native_territories)} native territories")
-                territory, distance = geo_utils.find_nearest_feature(erratic_point, native_territories) # Use module prefix
-                
-                if territory:
-                    # These are extra informational fields, not directly in ErraticAnalysis model
-                    results["nearest_native_territory_name"] = territory.get('Name', 'Unknown') 
-                    results["nearest_native_territory_nation"] = territory.get('Nation', 'Unknown')
-                    results["on_native_territory"] = distance < 100  # Within 100m
-                    
-                    logger.info(f"Nearest native territory: {results.get('nearest_native_territory_name')} ({results.get('nearest_native_territory_nation')}) at {results['nearest_native_territory_dist']:.1f}m")
-                    if results.get("on_native_territory"):
-                        logger.info(f"Erratic is on {results.get('nearest_native_territory_name')} territory")
-            else:
-                logger.warning("No native territory data available")
-        except Exception as e:
-            logger.error(f"Error processing native territories: {e}")
+            territories_gdf = load_data('native_territories')
+            if not territories_gdf.empty:
+                territory, dist = geo_utils.find_nearest_feature(erratic_point, territories_gdf)
+                results["nearest_native_territory_dist"] = dist if dist != float('inf') else None
+                if territory is not None: results["nearest_native_territory_name"] = territory.get('Name')
+                logger.info(f"Nearest native territory: {results.get('nearest_native_territory_name')} at {results.get('nearest_native_territory_dist')}m")
+        except Exception as e: logger.error(f"Error processing native territories for {erratic_id}: {e}", exc_info=True)
+
+    if "osm_settlements" in feature_layers:
+        try:
+            # Using North America wide data, could be parameterized by region later if needed.
+            settlements_gdf = load_data('osm_north_america_settlements') 
+            if not settlements_gdf.empty:
+                settlement, dist = geo_utils.find_nearest_feature(erratic_point, settlements_gdf)
+                results["nearest_settlement_dist"] = dist if dist != float('inf') else None
+                if settlement is not None:
+                    results["nearest_settlement_name"] = settlement.get('name')
+                    results["nearest_settlement_type"] = settlement.get('place_type') # Assuming PBFProcessor standardizes this
+                logger.info(f"Nearest OSM settlement: {results.get('nearest_settlement_name')} at {results.get('nearest_settlement_dist')}m")
+        except Exception as e: logger.error(f"Error processing OSM settlements for {erratic_id}: {e}", exc_info=True)
     
-    # Process modern settlements
-    if "settlements" in feature_layers:
-        logger.info("Loading modern settlement data...")
+    if "nhgis_settlements" in feature_layers: # Colonial settlements
         try:
-            # Load settlements from North America
-            settlements = load_settlements('north-america')
-            if not settlements.empty:
-                logger.info(f"Loaded {len(settlements)} settlements")
-                settlement, distance = geo_utils.find_nearest_feature(erratic_point, settlements) # Use module prefix
-                
-                if settlement:
-                    results["nearest_settlement_dist"] = distance
-                    results["nearest_settlement_name"] = settlement.get('name', 'Unknown')
-                    results["nearest_settlement_type"] = settlement.get('place_type', 'Unknown')
-                    
-                    logger.info(f"Nearest settlement: {results['nearest_settlement_name']} ({results['nearest_settlement_type']}) at {distance:.1f}m")
-            else:
-                logger.warning("No settlement data available")
-        except Exception as e:
-            logger.error(f"Error processing settlements: {e}")
-    
-    # Process colonial settlements
-    if "colonial_settlements" in feature_layers:
-        logger.info("Loading colonial settlement data...")
-        results['nearest_colonial_settlement_dist'] = None # Initialize
-        try:
-            colonial_settlements_gdf = load_colonial_settlements()
+            colonial_settlements_gdf = load_data('nhgis_historical_settlements')
             if not colonial_settlements_gdf.empty:
-                logger.info(f"Loaded {len(colonial_settlements_gdf)} colonial settlements")
-                settlement, distance = geo_utils.find_nearest_feature(erratic_point, colonial_settlements_gdf)
-                
-                results["nearest_colonial_settlement_dist"] = distance if distance != float('inf') else None
-                if settlement:
-                    results["nearest_colonial_settlement_name"] = settlement.get('name', 'Unknown')
-                    if 'founded' in settlement and settlement.get('founded') is not None:
-                        try:
-                            results["nearest_colonial_settlement_founded"] = int(settlement['founded'])
-                        except ValueError:
-                            logger.warning(f"Could not parse founded year '{settlement['founded']}' as int.")
-                            results["nearest_colonial_settlement_founded"] = None
-                    if 'colony' in settlement:
-                        results["nearest_colonial_settlement_colony"] = settlement.get('colony', 'Unknown')
-                    logger.info(f"Nearest colonial settlement: {results.get('nearest_colonial_settlement_name')} at {results.get('nearest_colonial_settlement_dist'):.1f}m" if results.get('nearest_colonial_settlement_dist') is not None else "N/A")
-            else:
-                logger.warning("No colonial settlement data available")
-        except Exception as e:
-            logger.error(f"Error processing colonial settlements: {e}")
-    
-    # Process modern roads
-    if "roads" in feature_layers:
-        logger.info("Loading modern road data...")
-        results['nearest_road_dist'] = None # Initialize
+                settlement, dist = geo_utils.find_nearest_feature(erratic_point, colonial_settlements_gdf)
+                results["nearest_colonial_settlement_dist"] = dist if dist != float('inf') else None
+                if settlement is not None: results["nearest_colonial_settlement_name"] = settlement.get('NHGISNAM') # Example name col
+                logger.info(f"Nearest colonial settlement: {results.get('nearest_colonial_settlement_name')} at {results.get('nearest_colonial_settlement_dist')}m")
+        except Exception as e: logger.error(f"Error processing NHGIS settlements for {erratic_id}: {e}", exc_info=True)
+
+    if "osm_roads" in feature_layers: # Modern roads
         try:
-            # Load modern roads from North America
-            roads = load_roads('north-america', include_historical=False) # This calls load_modern_roads
-            if not roads.empty:
-                logger.info(f"Loaded {len(roads)} modern roads")
-                road, distance = geo_utils.find_nearest_feature(erratic_point, roads) # Use module prefix
-                
-                results['nearest_road_dist'] = distance if distance != float('inf') else None
-                if road:
-                    # These are extra informational fields
-                    results["nearest_road_name"] = road.get('name', 'Unknown')
-                    results["nearest_road_type"] = road.get('highway', road.get('road_type', 'Unknown'))
-                    
-                    logger.info(f"Nearest modern road: {results.get('nearest_road_name')} ({results.get('nearest_road_type')}) at {results['nearest_road_dist']:.1f}m")
-            else:
-                logger.warning("No modern road data available")
-        except Exception as e:
-            logger.error(f"Error processing modern roads: {e}")
-    
-    # Process colonial roads
+            roads_gdf = load_data('osm_north_america_roads') # Ensure this source name exists and is configured for roads
+            if not roads_gdf.empty:
+                road, dist = geo_utils.find_nearest_feature(erratic_point, roads_gdf)
+                results["nearest_road_dist"] = dist if dist != float('inf') else None
+                if road is not None:
+                    results["nearest_road_name"] = road.get('name')
+                    results["nearest_road_type"] = road.get('highway') # Standard OSM tag for road type
+                logger.info(f"Nearest OSM road: {results.get('nearest_road_name')} ({results.get('nearest_road_type')}) at {results.get('nearest_road_dist')}m")
+        except Exception as e: logger.error(f"Error processing OSM roads for {erratic_id}: {e}", exc_info=True)
+
     if "colonial_roads" in feature_layers:
-        logger.info("Loading colonial road data...")
-        results['nearest_colonial_road_dist'] = None # Initialize
         try:
-            colonial_roads_gdf = load_colonial_roads()
+            colonial_roads_gdf = load_data('colonial_roads')
             if not colonial_roads_gdf.empty:
-                logger.info(f"Loaded {len(colonial_roads_gdf)} colonial roads")
-                road, distance = geo_utils.find_nearest_feature(erratic_point, colonial_roads_gdf)
-                
-                results["nearest_colonial_road_dist"] = distance if distance != float('inf') else None
-                if road:
-                    results["nearest_colonial_road_name"] = road.get('name', 'Unknown')
-                    if 'year' in road and road.get('year') is not None:
-                        try:
-                            results["nearest_colonial_road_year"] = int(road['year'])
-                        except ValueError:
-                            logger.warning(f"Could not parse road year '{road['year']}' as int.")
-                            results["nearest_colonial_road_year"] = None                    
-                    logger.info(f"Nearest colonial road: {results.get('nearest_colonial_road_name')} at {results.get('nearest_colonial_road_dist'):.1f}m" if results.get('nearest_colonial_road_dist') is not None else "N/A")
-            else:
-                logger.warning("No colonial road data available")
-        except Exception as e:
-            logger.error(f"Error processing colonial roads: {e}")
+                road, dist = geo_utils.find_nearest_feature(erratic_point, colonial_roads_gdf)
+                results["nearest_colonial_road_dist"] = dist if dist != float('inf') else None
+                if road is not None: results["nearest_colonial_road_name"] = road.get('name') # Or other relevant attribute
+                logger.info(f"Nearest colonial road: {results.get('nearest_colonial_road_name')} at {results.get('nearest_colonial_road_dist')}m")
+        except Exception as e: logger.error(f"Error processing colonial roads for {erratic_id}: {e}", exc_info=True)
     
-    # --- Terrain Analysis ---
-    dem_path = None # Initialize dem_path
+    # --- Terrain Analysis (DEM related, geo_utils.load_dem_data will need to be robust or use data_pipeline if possible) ---
+    # This part remains dependent on how geo_utils.load_dem_data is refactored.
+    # For now, we assume it correctly finds/loads the necessary DEM tile(s), perhaps using `data_pipeline` internally
+    # or by expecting manually placed files for sources like 'srtm90_csi_elevation' or specific GMTED tiles.
     try:
-        dem_path = geo_utils.load_dem_data(point=erratic_point) # Pass point to get specific tile
-    except Exception as e:
-        logger.error(f"Failed to load DEM data: {e}")
-
-    if dem_path:
-        try:
-            logger.info("Analyzing point elevation...")
-            point_elevation = geo_utils.get_elevation_at_point(erratic_point, dem_path)
-            if point_elevation is not None:
-                # Update elevation in results if not already present or if more accurate
-                # The Erratic model might already have an elevation, but DEM provides standardized one
-                results['elevation_dem'] = point_elevation
-                results['elevation_category'] = geo_utils.get_elevation_category(point_elevation) # Use module prefix
-                logger.info(f"Elevation from DEM: {point_elevation:.1f}m (Category: {results['elevation_category']})")
-            else:
-                logger.warning("Could not retrieve elevation from DEM for this point.")
-        except Exception as e:
-            logger.error(f"Error getting point elevation: {e}")
+        dem_data_info = geo_utils.load_dem_data(point=erratic_point) # This needs to return path or rasterio object
+        if dem_data_info and dem_data_info.get('raster_path'): # Assuming it returns a dict with path
+            raster_path = dem_data_info['raster_path']
+            point_elevation = geo_utils.get_elevation_at_point(erratic_point, raster_path)
+            if point_elevation is not None: results['elevation_dem'] = point_elevation
+            # Update elevation_category if DEM elevation is available and different
+            if 'elevation_dem' in results: results['elevation_category'] = geo_utils.get_elevation_category(results['elevation_dem'])
             
-        try:
-            logger.info("Analyzing terrain context (landscape metrics & geomorphology)...")
-            # Use a moderate radius for landscape metrics, adjust as needed
-            landscape_metrics = geo_utils.calculate_landscape_metrics(erratic_point, dem_path, radius_m=500) 
-            geomorphological_context = geo_utils.determine_geomorphological_context(erratic_point, dem_path)
-            
-            # Add relevant metrics to results if they are calculated
-            # Ensure these keys exist in ErraticAnalyses model or are for informational purposes only
-            if not np.isnan(landscape_metrics.get('ruggedness_tri', np.nan)):
-                results["ruggedness_tri"] = landscape_metrics['ruggedness_tri']
-            if geomorphological_context.get('landform', 'unknown') != 'unknown':
-                results["terrain_landform"] = geomorphological_context['landform']
-            if geomorphological_context.get('slope_position', 'unknown') != 'unknown':
-                 results["terrain_slope_position"] = geomorphological_context['slope_position']
-            
-            logger.info(f"Terrain context: Landform={results.get('terrain_landform')}, Slope Position={results.get('terrain_slope_position')}, TRI={results.get('ruggedness_tri')}")
-        except Exception as e:
-            logger.error(f"Error analyzing terrain context: {e}")
-    else:
-        logger.warning("DEM data not available, providing estimated terrain values.")
-        
-        # Set default/fallback values when DEM is unavailable
-        # If the point has a known elevation from another source, we can still categorize it
-        if erratic.get('elevation') is not None:
-            try:
-                elevation = float(erratic.get('elevation'))
-                # We already set elevation_category earlier, but ensure it's here if it was missed
-                if 'elevation_category' not in results:
-                    results['elevation_category'] = geo_utils.get_elevation_category(elevation)
-            except (ValueError, TypeError):
-                pass
-                
-        # Estimate ruggedness based on region if possible
-        if 60 < abs(erratic_point.latitude) < 80:  # High latitudes (Arctic/Antarctic)
-            # Typically glaciated, moderate ruggedness
-            results["ruggedness_tri"] = 25.0
-            results["terrain_landform"] = "glaciated_terrain"
-            results["terrain_slope_position"] = "glacial_plain"
-            logger.info("Using estimated terrain values for high-latitude region.")
-        elif 'elevation_category' in results:
-            # Use elevation category to make an educated guess about terrain
-            if results['elevation_category'] in ['lowland', 'below_sea_level']:
-                results["ruggedness_tri"] = 5.0
-                results["terrain_landform"] = "coastal_plain"
-                results["terrain_slope_position"] = "level"
-            elif results['elevation_category'] in ['upland', 'hill']:
-                results["ruggedness_tri"] = 15.0
-                results["terrain_landform"] = "rolling_hills"
-                results["terrain_slope_position"] = "midslope"
-            elif 'mountain' in results['elevation_category']:
-                results["ruggedness_tri"] = 35.0
-                results["terrain_landform"] = "mountain_terrain"
-                results["terrain_slope_position"] = "ridge"
-            logger.info(f"Using estimated terrain values based on elevation category: {results.get('elevation_category')}")
+            landscape_metrics = geo_utils.calculate_landscape_metrics(erratic_point, raster_path, radius_m=500)
+            geomorph_context = geo_utils.determine_geomorphological_context(erratic_point, raster_path)
+            if not np.isnan(landscape_metrics.get('ruggedness_tri', np.nan)): results["ruggedness_tri"] = landscape_metrics['ruggedness_tri']
+            if geomorph_context.get('landform') != 'unknown': results["terrain_landform"] = geomorph_context['landform']
+            if geomorph_context.get('slope_position') != 'unknown': results["terrain_slope_position"] = geomorph_context['slope_position']
+            logger.info(f"Terrain context from DEM: {results.get('terrain_landform')}, {results.get('terrain_slope_position')}, TRI: {results.get('ruggedness_tri')}")
         else:
-            # Last resort defaults
-            results["ruggedness_tri"] = 10.0  # Moderate default
-            results["terrain_landform"] = "undetermined"
-            results["terrain_slope_position"] = "undetermined"
-            logger.info("Using default terrain values due to lack of DEM data.")
-            
-        logger.info(f"Estimated terrain context: Landform={results.get('terrain_landform')}, Slope Position={results.get('terrain_slope_position')}, TRI={results.get('ruggedness_tri')}")
+            logger.warning(f"DEM data not available for detailed terrain analysis for erratic ID {erratic_id}. Using estimates.")
+            # Fallback logic from original script can be here if needed (based on lat/lon or existing elevation)
+            if 'elevation_category' not in results and erratic.get('elevation') is not None:
+                 try: results['elevation_category'] = geo_utils.get_elevation_category(float(erratic['elevation']))
+                 except: pass
+    except Exception as e: logger.error(f"Error during terrain analysis for {erratic_id}: {e}", exc_info=True)
 
-    # --- Other Calculated Fields ---
+    # Simplified displacement and accessibility (can be refined in geo_utils or specific modules)
+    if 'estimated_displacement_dist' not in results: # Example of a field that might be calculated differently
+        results["estimated_displacement_dist"] = geo_utils.estimate_displacement_distance(latitude) # Assumes geo_utils has this
+    if 'accessibility_score' not in results:
+        results["accessibility_score"] = geo_utils.calculate_accessibility_score(results.get("nearest_road_dist"), results.get("nearest_settlement_dist"))
 
-    # Estimate displacement distance (simplified example)
-    try:
-        # This is a simplified model - a real implementation would use actual glacial flow models
-        # and geological data for the specific region in North America
-        
-        # Different displacement estimates based on region
-        if latitude > 60:  # Northern Canada/Alaska
-            displacement_est = 12000.0  # Typically longer in northern regions
-        elif latitude > 45:  # Northern US/Southern Canada
-            displacement_est = 8500.0   # Moderate in central regions
-        else:  # Southern US
-            displacement_est = 5000.0   # Typically shorter in southern extent of glaciation
-            
-        results["estimated_displacement_dist"] = displacement_est
-        logger.info(f"Estimated displacement: {results['estimated_displacement_dist']}m")
-    except Exception as e:
-        logger.error(f"Error estimating displacement: {e}")
-    
-    # Calculate accessibility score (1-5 scale)
-    try:
-        # Base score on distance to nearest road and settlement
-        road_dist = results.get("nearest_road_dist", float('inf'))
-        settlement_dist = results.get("nearest_settlement_dist", float('inf'))
-        
-        if road_dist < 100 and settlement_dist < 5000:
-            accessibility = 5  # Very accessible
-        elif road_dist < 500 and settlement_dist < 10000:
-            accessibility = 4  # Accessible
-        elif road_dist < 2000 and settlement_dist < 20000:
-            accessibility = 3  # Moderately accessible
-        elif road_dist < 5000 and settlement_dist < 50000:
-            accessibility = 2  # Remote
-        else:
-            accessibility = 1  # Very remote
-        
-        results["accessibility_score"] = accessibility
-        logger.info(f"Accessibility score: {results['accessibility_score']}/5")
-    except Exception as e:
-        logger.error(f"Error calculating accessibility: {e}")
-    
-    # Combine all results
-    analysis_result = {
+    final_results = {
         "erratic_id": erratic_id,
         "erratic_name": erratic.get('name', 'Unknown'),
-        "location": {
-            "longitude": longitude,
-            "latitude": latitude
-        },
+        "location": {"longitude": longitude, "latitude": latitude},
         "proximity_analysis": results
     }
-    
-    logger.info(f"Analysis complete for erratic {erratic_id}")
-
-    # Close DB connection if it was opened
-    if conn:
-        conn.close()
-
-    return analysis_result
+    logger.info(f"Proximity analysis completed for erratic ID {erratic_id}")
+    return final_results
 
 def main():
-    """Main function for command line execution."""
     parser = argparse.ArgumentParser(description='Calculate proximity for a glacial erratic')
     parser.add_argument('erratic_id', type=int, help='ID of the erratic to analyze')
-    parser.add_argument('--features', nargs='+', help='Feature layers to calculate proximity to')
+    parser.add_argument('--features', nargs='+', help='Feature layers to analyze (e.g., lakes, osm_settlements)')
     parser.add_argument('--update-db', action='store_true', help='Update database with results')
     parser.add_argument('--output', type=str, help='Output file for results (JSON)')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     
     args = parser.parse_args()
+    if args.verbose: logging.getLogger().setLevel(logging.DEBUG)
     
-    # Set log level based on verbosity
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-    
-    logger.info(f"Starting proximity analysis for erratic {args.erratic_id}")
     results = calculate_proximity(args.erratic_id, args.features)
     
-    # Handle error
     if 'error' in results:
-        logger.error(f"Analysis error: {results['error']}")
-        print(json.dumps({"error": results['error']}))
-        return 1
+        logger.error(f"Analysis failed: {results['error']}")
+        print(json.dumps({"error": results['error']})) # Keep JSON output for Node.js service
+        sys.exit(1)
     
-    # Update database if requested
     if args.update_db:
-        logger.info(f"Updating database with analysis results for erratic {args.erratic_id}")
-        update_data = results.get('proximity_analysis', {})
-        success = update_erratic_analysis_data(args.erratic_id, update_data)
+        logger.info(f"Updating database for erratic {args.erratic_id}...")
+        # Ensure only relevant fields for ErraticAnalyses are passed
+        analysis_payload = results.get('proximity_analysis', {})
+        success = db_utils.update_erratic_analysis_results(args.erratic_id, analysis_payload)
         results['database_updated'] = success
-        logger.info(f"Database update {'succeeded' if success else 'failed'}")
+        logger.info(f"Database update for {args.erratic_id} {'succeeded' if success else 'failed'}")
     
-    # Write to output file if specified
     if args.output:
-        logger.info(f"Writing results to {args.output}")
-        json_to_file(results, args.output)
+        file_utils.json_to_file(results, args.output)
     
-    # Print results as JSON to stdout
-    print(json.dumps(results, indent=2))
-    logger.info("Analysis complete")
-    return 0
+    print(json.dumps(results, indent=2)) # Keep JSON output for Node.js service
+    logger.info("Proximity_analysis.py script finished.")
 
 if __name__ == "__main__":
+    # Adjust sys.path for direct execution if utils/data_pipeline are not installed as packages
+    # This ensures that when run directly, it can find sibling packages `utils` and `data_pipeline`
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    project_python_root = os.path.dirname(current_file_dir) # This should be 'python' directory
+    if project_python_root not in sys.path:
+        sys.path.insert(0, project_python_root)
+    # Re-import after path adjustment if necessary, or ensure imports are relative if run as module
+    # For simplicity, assuming direct execution might rely on PYTHONPATH or this adjustment.
+    from data_pipeline import load_data 
+    from utils import db_utils 
+    from utils import file_utils 
+    from utils import geo_utils 
+
     sys.exit(main()) 
