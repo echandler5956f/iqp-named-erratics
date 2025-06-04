@@ -127,7 +127,7 @@ forest_trails = DataSource(
 elevation_gmted_n30_w90 = DataSource(
     name='elevation_gmted_n30_w90',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N30W090_300/30n090w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N30W090_300/30n090w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N30W090_300'
 )
@@ -135,7 +135,7 @@ elevation_gmted_n30_w90 = DataSource(
 elevation_gmted_n30_w120 = DataSource(
     name='elevation_gmted_n30_w120',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N30W120_300/30n120w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N30W120_300/30n120w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N30W120_300'
 )
@@ -143,7 +143,7 @@ elevation_gmted_n30_w120 = DataSource(
 elevation_gmted_n50_w60 = DataSource(
     name='elevation_gmted_n50_w60',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W060_300/50n060w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N50W060_300/50n060w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N50W060_300'
 )
@@ -151,7 +151,7 @@ elevation_gmted_n50_w60 = DataSource(
 elevation_gmted_n50_w90 = DataSource(
     name='elevation_gmted_n50_w90',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W090_300/50n090w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N50W090_300/50n090w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N50W090_300'
 )
@@ -159,7 +159,7 @@ elevation_gmted_n50_w90 = DataSource(
 elevation_gmted_n50_w120 = DataSource(
     name='elevation_gmted_n50_w120',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W120_300/50n120w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N50W120_300/50n120w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N50W120_300'
 )
@@ -167,7 +167,7 @@ elevation_gmted_n50_w120 = DataSource(
 elevation_gmted_n50_w150 = DataSource(
     name='elevation_gmted_n50_w150',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W150_300/50n150w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N50W150_300/50n150w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N50W150_300'
 )
@@ -175,7 +175,7 @@ elevation_gmted_n50_w150 = DataSource(
 elevation_gmted_n50_w180 = DataSource(
     name='elevation_gmted_n50_w180',
     source_type='file',
-    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W180_300/50n180w_20101117_gmted_mea300.tif',
+    path=_local_path('elevation/GMTED2010N50W180_300/50n180w_20101117_gmted_mea300.tif'),
     format='geotiff',
     output_dir='elevation/GMTED2010N50W180_300'
 )
