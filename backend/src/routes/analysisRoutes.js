@@ -12,7 +12,7 @@ router.get('/proximity/:id', analysisController.getProximityAnalysis);
 
 /**
  * @route POST /api/analysis/proximity/batch
- * @description Run batch proximity analysis on multiple erratics
+ * @description Run batch proximity analysis on multiple erratics. Returns a Job ID.
  * @access Admin only
  */
 router.post('/proximity/batch', authenticateToken, requireAdmin, analysisController.batchProximityAnalysis);
@@ -26,14 +26,14 @@ router.get('/classify/:id', analysisController.classifyErratic);
 
 /**
  * @route POST /api/analysis/classify/batch
- * @description Run batch classification on multiple erratics
+ * @description Run batch classification on multiple erratics. Returns a Job ID.
  * @access Admin only
  */
 router.post('/classify/batch', authenticateToken, requireAdmin, analysisController.batchClassifyErratics);
 
 /**
  * @route GET /api/analysis/cluster
- * @description Perform spatial clustering on erratics. Triggers a background job.
+ * @description Perform spatial clustering on erratics. Triggers a background job. Returns a Job ID.
  * @access Public 
  * @query {string} [algorithm=dbscan] - Clustering algorithm (dbscan, kmeans, hierarchical).
  * @query {string} [features] - Comma-separated features to cluster on (e.g., 'latitude,longitude').
@@ -45,10 +45,17 @@ router.get('/cluster', analysisController.getClusterAnalysis);
 
 /**
  * @route POST /api/analysis/build-topics
- * @description Trigger the building of NLP topic models. Triggers a background job.
+ * @description Trigger the building of NLP topic models. Triggers a background job. Returns a Job ID.
  * @access Admin only
  * @body {{ outputPath?: string }} [outputPath=build_topics_result.json] - Path to save the output/log.
  */
 router.post('/build-topics', authenticateToken, requireAdmin, analysisController.triggerBuildTopicModels);
+
+/**
+ * @route GET /api/analysis/jobs/:jobId
+ * @description Get the status and results of a submitted analysis job.
+ * @access Public (or could be protected if needed)
+ */
+router.get('/jobs/:jobId', analysisController.getJobStatus);
 
 module.exports = router; 

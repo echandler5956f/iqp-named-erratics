@@ -1,5 +1,6 @@
 const pythonService = require('../services/pythonService');
 const logger = require('../utils/logger');
+const { jobStore, generateJobId } = require('../utils/jobStore');
 
 /**
  * Controller for spatial analysis operations
@@ -16,6 +17,7 @@ class AnalysisController {
     this.batchClassifyErratics = this.batchClassifyErratics.bind(this);
     this.getClusterAnalysis = this.getClusterAnalysis.bind(this);
     this.triggerBuildTopicModels = this.triggerBuildTopicModels.bind(this);
+    this.getJobStatus = this.getJobStatus.bind(this);
 
     // Bind private helper methods (if their `this` context might be lost, though less likely if called via this.*)
     this._processBatchAnalysis = this._processBatchAnalysis.bind(this);
@@ -78,19 +80,26 @@ class AnalysisController {
         return res.status(400).json({ error: 'Invalid or empty erratic ID list' });
       }
       
-      // Start a background job for processing
-      const jobId = `batch_proximity_${Date.now()}`;
+      const jobId = generateJobId('batch_proximity');
+      jobStore.addJob(jobId, 'batch_proximity', { count: erraticIds.length, featureLayers, updateDb });
       logger.info(`[AnalysisController] Starting batch proximity analysis job ID: ${jobId}`, { count: erraticIds.length });
+      
       res.status(202).json({ 
-        message: 'Batch proximity analysis started', 
+        message: 'Batch proximity analysis accepted', 
         job_id: jobId,
-        erratics_count: erraticIds.length
       });
       
-      // Process erratics in background
+      // Non-blocking execution
       this._processBatchAnalysis(jobId, erraticIds, featureLayers, updateDb)
-        .then(summary => logger.info(`[AnalysisController] Batch proximity analysis job ID ${jobId} completed.`, { summary }))
-        .catch(error => logger.error(`[AnalysisController] Error in background batch proximity processing for job ID ${jobId}`, { message: error.message, stack: error.stack }));
+        // The then/catch here are for the _processBatchAnalysis promise itself, not the Python script calls within it.
+        .then(summary => {
+            logger.info(`[AnalysisController] Batch proximity analysis job ID ${jobId} processing function completed.`, { summary });
+            // Final status update will be handled within _processBatchAnalysis based on accumulated results
+        })
+        .catch(error => {
+            logger.error(`[AnalysisController] Critical error in _processBatchAnalysis itself for job ID ${jobId}`, { message: error.message, stack: error.stack });
+            jobStore.updateJobStatus(jobId, 'failed', { error: 'Background processing function failed critically.' });
+        });
     } catch (error) {
       logger.error('[AnalysisController] Error starting batch proximity analysis', { message: error.message, stack: error.stack });
       res.status(500).json({ error: error.message || 'Error starting batch analysis' });
@@ -106,27 +115,31 @@ class AnalysisController {
    * @private
    */
   async _processBatchAnalysis(jobId, erraticIds, featureLayers = [], updateDb = true) {
+    jobStore.updateJobStatus(jobId, 'running');
     logger.info(`[AnalysisController] Background processing batch proximity analysis for job ID: ${jobId}`, { count: erraticIds.length });
-    const resultsSummary = { successful: 0, failed: 0, errors: [] };
+    const summary = { successful: 0, failed: 0, errors: [], total: erraticIds.length };
     
     for (const erraticId of erraticIds) {
       try {
         const result = await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
         if (result.error) {
-          logger.warn(`[AnalysisController] Batch proximity failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
-          resultsSummary.failed++;
-          resultsSummary.errors.push({ id: erraticId, error: result.error });
+          logger.warn(`[AnalysisController] Batch proximity item failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
+          summary.failed++;
+          summary.errors.push({ id: erraticId, error: result.error });
         } else {
-          resultsSummary.successful++;
+          summary.successful++;
         }
       } catch (error) {
-        logger.error(`[AnalysisController] Exception during batch proximity for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
-        resultsSummary.failed++;
-        resultsSummary.errors.push({ id: erraticId, error: error.message });
+        logger.error(`[AnalysisController] Exception during batch proximity item for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
+        summary.failed++;
+        summary.errors.push({ id: erraticId, error: error.message });
       }
     }
-    logger.info(`[AnalysisController] Batch proximity processing finished for job ID: ${jobId}`, { resultsSummary });
-    return resultsSummary;
+
+    const finalStatus = summary.failed === 0 ? 'completed' : 'completed_with_errors';
+    jobStore.updateJobStatus(jobId, finalStatus, { result: summary });
+    logger.info(`[AnalysisController] Batch proximity processing finished for job ID: ${jobId}`, { summary });
+    return summary;
   }
   
   /**
@@ -177,19 +190,23 @@ class AnalysisController {
         return res.status(400).json({ error: 'Invalid or empty erratic ID list' });
       }
       
-      // Start a background job for processing
-      const jobId = `batch_classify_${Date.now()}`;
+      const jobId = generateJobId('batch_classify');
+      jobStore.addJob(jobId, 'batch_classification', { count: erraticIds.length, updateDb });
       logger.info(`[AnalysisController] Starting batch classification job ID: ${jobId}`, { count: erraticIds.length });
+
       res.status(202).json({ 
-        message: 'Batch classification started', 
+        message: 'Batch classification accepted', 
         job_id: jobId,
-        erratics_count: erraticIds.length
       });
       
-      // Process erratics in background
       this._processBatchClassification(jobId, erraticIds, updateDb)
-        .then(summary => logger.info(`[AnalysisController] Batch classification job ID ${jobId} completed.`, { summary }))
-        .catch(error => logger.error(`[AnalysisController] Error in background batch classification for job ID ${jobId}`, { message: error.message, stack: error.stack }));
+        .then(summary => {
+            logger.info(`[AnalysisController] Batch classification job ID ${jobId} processing function completed.`, { summary });
+        })
+        .catch(error => {
+            logger.error(`[AnalysisController] Critical error in _processBatchClassification itself for job ID ${jobId}`, { message: error.message, stack: error.stack });
+            jobStore.updateJobStatus(jobId, 'failed', { error: 'Background processing function failed critically.' });
+        });
     } catch (error) {
       logger.error('[AnalysisController] Error starting batch classification', { message: error.message, stack: error.stack });
       res.status(500).json({ error: error.message || 'Error starting batch classification' });
@@ -203,27 +220,30 @@ class AnalysisController {
    * @private
    */
   async _processBatchClassification(jobId, erraticIds, updateDb = true) {
+    jobStore.updateJobStatus(jobId, 'running');
     logger.info(`[AnalysisController] Background processing batch classification for job ID: ${jobId}`, { count: erraticIds.length });
-    const resultsSummary = { successful: 0, failed: 0, errors: [] };
+    const summary = { successful: 0, failed: 0, errors: [], total: erraticIds.length };
     
     for (const erraticId of erraticIds) {
       try {
         const result = await pythonService.runClassification(erraticId, updateDb);
         if (result.error) {
-          logger.warn(`[AnalysisController] Batch classification failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
-          resultsSummary.failed++;
-          resultsSummary.errors.push({ id: erraticId, error: result.error });
+          logger.warn(`[AnalysisController] Batch classification item failed for erratic ID ${erraticId} (Job ${jobId})`, { error: result.error });
+          summary.failed++;
+          summary.errors.push({ id: erraticId, error: result.error });
         } else {
-          resultsSummary.successful++;
+          summary.successful++;
         }
       } catch (error) {
-        logger.error(`[AnalysisController] Exception during batch classification for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
-        resultsSummary.failed++;
-        resultsSummary.errors.push({ id: erraticId, error: error.message });
+        logger.error(`[AnalysisController] Exception during batch classification item for erratic ID ${erraticId} (Job ${jobId})`, { message: error.message });
+        summary.failed++;
+        summary.errors.push({ id: erraticId, error: error.message });
       }
     }
-    logger.info(`[AnalysisController] Batch classification processing finished for job ID: ${jobId}`, { resultsSummary });
-    return resultsSummary;
+    const finalStatus = summary.failed === 0 ? 'completed' : 'completed_with_errors';
+    jobStore.updateJobStatus(jobId, finalStatus, { result: summary });
+    logger.info(`[AnalysisController] Batch classification processing finished for job ID: ${jobId}`, { summary });
+    return summary;
   }
 
   /**
@@ -253,25 +273,30 @@ class AnalysisController {
         }
       }
       const doOutputToFile = outputToFile === 'true';
-      const jobId = `cluster_analysis_${Date.now()}`;
+      const jobId = generateJobId('clustering');
+      const jobParams = { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename }; 
+      jobStore.addJob(jobId, 'clustering', jobParams);
 
-      logger.info(`[AnalysisController] Starting clustering analysis job ID: ${jobId}`, { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename });
+      logger.info(`[AnalysisController] Starting clustering analysis job ID: ${jobId}`, jobParams);
       res.status(202).json({ 
-        message: 'Clustering analysis job started', 
+        message: 'Clustering analysis job accepted', 
         job_id: jobId,
-        details: { algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename }
       });
 
+      jobStore.updateJobStatus(jobId, 'running');
       pythonService.runClusteringAnalysis(algorithm, featuresToCluster, parsedAlgoParams, doOutputToFile, outputFilename)
         .then(results => {
           if (results.error) {
             logger.error(`[AnalysisController] Error in clustering analysis (Job ${jobId})`, { error: results.error, details: results.details });
+            jobStore.updateJobStatus(jobId, 'failed', { error: results.error, details: results.details });
           } else {
-            logger.info(`[AnalysisController] Clustering analysis (Job ${jobId}) completed successfully.`, { results }); // Log full results on success for background job
+            logger.info(`[AnalysisController] Clustering analysis (Job ${jobId}) completed successfully.`, { results });
+            jobStore.updateJobStatus(jobId, 'completed', { result: results });
           }
         })
         .catch(error => {
           logger.error(`[AnalysisController] Failed to execute clustering analysis script (Job ${jobId})`, { message: error.message, stack: error.stack });
+          jobStore.updateJobStatus(jobId, 'failed', { error: error.message });
         });
 
     } catch (error) {
@@ -289,31 +314,49 @@ class AnalysisController {
     logger.info('[AnalysisController] triggerBuildTopicModels called', { body: req.body });
     try {
       const { outputPath = 'build_topics_result.json' } = req.body;
-      const jobId = `build_topics_${Date.now()}`;
+      const jobId = generateJobId('topic_modeling');
+      jobStore.addJob(jobId, 'topic_modeling', { outputPath });
 
       logger.info(`[AnalysisController] Starting topic model building job ID: ${jobId}`, { outputPath });
       res.status(202).json({ 
-        message: 'Topic model building process started',
+        message: 'Topic model building process accepted',
         job_id: jobId,
-        details: { outputPath }
       });
 
+      jobStore.updateJobStatus(jobId, 'running');
       pythonService.runBuildTopicModels(outputPath)
         .then(results => {
           if (results.error) {
             logger.error(`[AnalysisController] Error in topic model building (Job ${jobId})`, { error: results.error, details: results.details });
+            jobStore.updateJobStatus(jobId, 'failed', { error: results.error, details: results.details });
           } else {
-            logger.info(`[AnalysisController] Topic model building (Job ${jobId}) completed successfully.`, { results }); // Log full results on success
+            logger.info(`[AnalysisController] Topic model building (Job ${jobId}) completed successfully.`, { results });
+            jobStore.updateJobStatus(jobId, 'completed', { result: results });
           }
         })
         .catch(error => {
           logger.error(`[AnalysisController] Failed to execute topic model building script (Job ${jobId})`, { message: error.message, stack: error.stack });
+          jobStore.updateJobStatus(jobId, 'failed', { error: error.message });
         });
 
     } catch (error) {
       logger.error('[AnalysisController] Error starting topic model building', { message: error.message, stack: error.stack });
       res.status(500).json({ error: error.message || 'Error starting topic model building' });
     }
+  }
+
+  // New method to get job status
+  async getJobStatus(req, res) {
+    const { jobId } = req.params;
+    logger.info(`[AnalysisController] getJobStatus called for Job ID: ${jobId}`);
+    const job = jobStore.getJob(jobId);
+    if (!job) {
+      logger.warn(`[AnalysisController] Job not found for ID: ${jobId}`);
+      return res.status(404).json({ message: 'Job not found' });
+    }
+    // For simplicity, we return the whole job object. 
+    // In a more complex scenario, you might want to filter what's returned.
+    res.json(job);
   }
 }
 
