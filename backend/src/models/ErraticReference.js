@@ -11,7 +11,9 @@ module.exports = (sequelize, DataTypes) => {
       references: {
         model: 'Erratics',
         key: 'id'
-      }
+      },
+      onUpdate: 'CASCADE',
+      onDelete: 'CASCADE'
     },
     reference_type: {
       type: DataTypes.ENUM('article', 'book', 'paper', 'website', 'other'),

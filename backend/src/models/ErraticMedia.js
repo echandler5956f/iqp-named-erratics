@@ -11,7 +11,9 @@ module.exports = (sequelize, DataTypes) => {
       references: {
         model: 'Erratics',
         key: 'id'
-      }
+      },
+      onUpdate: 'CASCADE',
+      onDelete: 'CASCADE'
     },
     media_type: {
       type: DataTypes.ENUM('image', 'video', 'document', 'other'),
