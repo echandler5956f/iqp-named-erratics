@@ -100,6 +100,15 @@ class DataPipeline:
                 logger.error(f"Local file not found: {source.path}")
                 return None
         
+        # For manual data sources, return the local path directly
+        if source.source_type == 'manual':
+            manual_path = source.params.get('local_path') or source.path
+            if manual_path and os.path.exists(manual_path):
+                return manual_path
+            else:
+                logger.error(f"Manual data file not found: {manual_path}")
+                return None
+        
         # Determine download path
         if source.url:
             filename = os.path.basename(source.url)

@@ -22,6 +22,31 @@ class DataRegistry:
         
         self._sources[source.name] = source
     
+    def add_manual_source(self, name: str, local_path: str, format: str = 'auto', 
+                         description: str = '', **kwargs) -> None:
+        """
+        Convenience method to register a manual data source.
+        
+        Args:
+            name: Unique name for the data source
+            local_path: Path to the manually downloaded data file
+            format: Data format ('shapefile', 'geojson', 'pbf', etc.)
+            description: Optional description of the data source
+            **kwargs: Additional parameters for the data source
+        """
+        source = DataSource(
+            name=name,
+            source_type='manual',
+            path=local_path,
+            format=format,
+            params={
+                'description': description,
+                'local_path': local_path,
+                **kwargs
+            }
+        )
+        self.register(source)
+    
     def get(self, name: str) -> Optional[DataSource]:
         """Get a data source by name"""
         return self._sources.get(name)
@@ -29,6 +54,11 @@ class DataRegistry:
     def list_sources(self) -> list[str]:
         """List all registered source names"""
         return list(self._sources.keys())
+    
+    def list_manual_sources(self) -> list[str]:
+        """List all manual data sources"""
+        return [name for name, source in self._sources.items() 
+                if source.source_type == 'manual']
     
     def clear(self) -> None:
         """Clear all registered sources (mainly for testing)"""

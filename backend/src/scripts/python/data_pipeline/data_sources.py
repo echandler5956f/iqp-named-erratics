@@ -75,64 +75,258 @@ osm_canada = DataSource(
 # Native territories data
 native_territories = DataSource(
     name='native_territories',
-    source_type='https',
-    url='https://nativeland.info/api/index.php?maps=territories',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/territories.geojson',
     format='geojson',
     output_dir='native'
 )
 
 native_languages = DataSource(
     name='native_languages',
-    source_type='https',
-    url='https://nativeland.info/api/index.php?maps=languages',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/languages.geojson',
     format='geojson',
     output_dir='native'
 )
 
 native_treaties = DataSource(
     name='native_treaties',
-    source_type='https',
-    url='https://nativeland.info/api/index.php?maps=treaties',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/native/treaties.geojson',
     format='geojson',
     output_dir='native'
 )
 
-# Historical data sources
-nhgis_historical = DataSource(
-    name='nhgis_historical',
-    source_type='https',
-    url='https://www.nhgis.org/sites/www.nhgis.org/files/nhgis_shapefiles.zip',
+natd_roads = DataSource(
+    name='natd_roads',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/roads/North_American_Roads.shp',
     format='shapefile',
-    output_dir='colonial'
-)
-
-colonial_roads = DataSource(
-    name='colonial_roads',
-    source_type='https',
-    url='https://www.daart.online/data/roads_colonial_era.geojson',
-    format='geojson',
     output_dir='roads'
 )
 
-# Elevation data sources
-elevation_srtm90 = DataSource(
-    name='elevation_srtm90_csi',
-    source_type='ftp',
-    url='ftp://srtm.csi.cgiar.org/SRTM_V41/SRTM_Data_GeoTiff/',
-    format='geotiff',
-    output_dir='elevation',
-    params={
-        'tile_based': True,
-        'resolution': 90
-    }
+forest_trails = DataSource(
+    name='forest_trails',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/trails/National_Forest_System_Trails_(Feature_Layer).shp',
+    format='shapefile',
+    output_dir='trails'
 )
 
-elevation_dem_na = DataSource(
-    name='elevation_dem_na',
-    source_type='https',
-    url='https://www.ngdc.noaa.gov/mgg/topo/gltiles/arctic/arctic.tgz',
+elevation_gmted_n30_w90 = DataSource(
+    name='elevation_gmted_n30_w90',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N30W090_300/30n090w_20101117_gmted_mea300.tif',
     format='geotiff',
-    output_dir='elevation'
+    output_dir='elevation/GMTED2010N30W090_300'
+)
+
+elevation_gmted_n30_w120 = DataSource(
+    name='elevation_gmted_n30_w120',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N30W120_300/30n120w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N30W120_300'
+)
+
+elevation_gmted_n50_w60 = DataSource(
+    name='elevation_gmted_n50_w60',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W060_300/50n060w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N50W060_300'
+)
+
+elevation_gmted_n50_w90 = DataSource(
+    name='elevation_gmted_n50_w90',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W090_300/50n090w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N50W090_300'
+)
+
+elevation_gmted_n50_w120 = DataSource(
+    name='elevation_gmted_n50_w120',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W120_300/50n120w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N50W120_300'
+)
+
+elevation_gmted_n50_w150 = DataSource(
+    name='elevation_gmted_n50_w150',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W150_300/50n150w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N50W150_300'
+)
+
+elevation_gmted_n50_w180 = DataSource(
+    name='elevation_gmted_n50_w180',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/elevation/GMTED2010N50W180_300/50n180w_20101117_gmted_mea300.tif',
+    format='geotiff',
+    output_dir='elevation/GMTED2010N50W180_300'
+)
+
+glcc_nademl = DataSource(
+    name='nademl',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nademl.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nabatsl20 = DataSource(
+    name='nabatsl20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nabatsl20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_naigbpl20 = DataSource(
+    name='naigbpl20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naigbpl20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nalulcl20 = DataSource(
+    name='nalulcl20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nalulcl20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandviapr92l = DataSource(
+    name='nandviapr92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandviapr92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandviaug92l = DataSource(
+    name='nandviaug92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandviaug92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvidec92l = DataSource(
+    name='nandvidec92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvidec92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvifeb93l = DataSource(
+    name='nandvifeb93l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvifeb93l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvijan93l = DataSource(
+    name='nandvijan93l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvijan93l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvijun92l = DataSource(
+    name='nandvijun92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvijun92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvimar93l = DataSource(
+    name='nandvimar93l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvimar93l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvimay92l = DataSource(
+    name='nandvimay92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvimay92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvinov92l = DataSource(
+    name='nandvinov92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvinov92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvioct92l = DataSource(
+    name='nandvioct92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvioct92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nandvisep92l = DataSource(
+    name='nandvisep92l',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nandvisep92l.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_naogel20 = DataSource(
+    name='naogel20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naogel20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_nasbm2l20 = DataSource(
+    name='nasbm2l20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/nasbm2l20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_naslcrl20 = DataSource(
+    name='naslcrl20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naslcrl20.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_naurbanl = DataSource(
+    name='naurbanl',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/naurbanl.tif',
+    format='geotiff',
+    output_dir='glcc'
+)
+
+glcc_navll20 = DataSource(
+    name='navll20',
+    source_type='file',
+    path='/home/quant/bin/iqp-named-erratics/backend/src/scripts/python/data/gis/glcc/navll20.tif',
+    format='geotiff',
+    output_dir='glcc'
 )
 
 
@@ -148,10 +342,35 @@ def register_all_sources():
         native_territories,
         native_languages,
         native_treaties,
-        nhgis_historical,
-        colonial_roads,
-        elevation_srtm90,
-        elevation_dem_na
+        natd_roads,
+        forest_trails,
+        elevation_gmted_n30_w90,
+        elevation_gmted_n30_w120,
+        elevation_gmted_n50_w60,
+        elevation_gmted_n50_w90,
+        elevation_gmted_n50_w120,
+        elevation_gmted_n50_w150,
+        elevation_gmted_n50_w180,
+        glcc_nademl,
+        glcc_nabatsl20,
+        glcc_naigbpl20,
+        glcc_nalulcl20,
+        glcc_nandviapr92l,
+        glcc_nandviaug92l,
+        glcc_nandvidec92l,
+        glcc_nandvifeb93l,
+        glcc_nandvijan93l,
+        glcc_nandvijun92l,
+        glcc_nandvimar93l,
+        glcc_nandvimay92l,
+        glcc_nandvinov92l,
+        glcc_nandvioct92l,
+        glcc_nandvisep92l,
+        glcc_naogel20,
+        glcc_nasbm2l20,
+        glcc_naslcrl20,
+        glcc_naurbanl,
+        glcc_navll20
     ]
     
     for source in sources:

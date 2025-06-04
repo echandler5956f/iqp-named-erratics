@@ -133,6 +133,29 @@ class FileLoader(BaseLoader):
         return True
 
 
+class ManualLoader(BaseLoader):
+    """Loader for manually downloaded/provided data files"""
+    
+    def load(self, source: DataSource, target_path: str) -> bool:
+        """Validate and reference manually provided data"""
+        manual_path = source.params.get('local_path') or source.path
+        
+        if not manual_path:
+            logger.error(f"No local_path provided for manual source {source.name}")
+            return False
+            
+        if not os.path.exists(manual_path):
+            logger.error(f"Manual data file not found: {manual_path}")
+            logger.info(f"Please ensure the file exists at the expected location")
+            return False
+        
+        # For manual data, we typically don't copy the file
+        # Just validate it exists and return True to indicate success
+        # The pipeline will use the original path for processing
+        logger.info(f"Validated manual data for {source.name} at {manual_path}")
+        return True
+
+
 class LoaderFactory:
     """Factory for creating appropriate loaders"""
     
@@ -141,6 +164,7 @@ class LoaderFactory:
         'https': HTTPLoader,
         'ftp': FTPLoader,
         'file': FileLoader,
+        'manual': ManualLoader,
     }
     
     @classmethod
