@@ -55,7 +55,8 @@ class TestGetDbConnection:
             host="testhost", database="testdb", user="testuser", password="testpass", port=5432
         )
 
-    def test_get_db_connection_missing_env_var(self, monkeypatch):
+    @mock.patch('utils.db_utils.load_dotenv')  # Mock load_dotenv to prevent reloading from .env file
+    def test_get_db_connection_missing_env_var(self, mock_load_dotenv, monkeypatch):
         monkeypatch.delenv("DB_NAME") # Remove a required var
         with pytest.raises(ValueError, match="DB config incomplete. Missing:.*database"):
             db_utils.get_db_connection()
