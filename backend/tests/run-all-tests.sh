@@ -2,7 +2,7 @@
 # Run all tests for the backend
 
 # Set the conda environment name
-CONDA_ENV="iqp-py310"
+CONDA_ENV="glacial-erratics"
 
 # Colors for output
 GREEN='\033[0;32m'
