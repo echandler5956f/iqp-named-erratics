@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def get_db_connection(autocommit=False):
     """Establish a connection to the PostgreSQL database using environment variables from the root .env file."""
     current_script_path = pathlib.Path(__file__).resolve()
-    project_root = current_script_path.parent.parent.parent.parent.parent # utils -> python -> scripts -> src -> backend -> project_root
+    project_root = current_script_path.parent.parent.parent.parent.parent.parent # utils -> python -> scripts -> src -> backend -> iqp-named-erratics
     dotenv_path = project_root / '.env'
 
     if dotenv_path.exists():

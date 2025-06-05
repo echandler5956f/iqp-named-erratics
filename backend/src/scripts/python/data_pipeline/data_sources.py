@@ -47,10 +47,12 @@ hydrosheds_basins = DataSource(
 )
 
 # OpenStreetMap data sources
+
+# Too big to download, so we'll use a local file for now
 osm_north_america = DataSource(
     name='osm_north_america',
-    source_type='https',
-    url='https://download.geofabrik.de/north-america-latest.osm.pbf',
+    source_type='file',
+    path=_local_path('osm/north_america_pbf/north-america-latest.osm.pbf'),
     format='pbf',
     output_dir='osm/north_america_pbf', # Specific for the PBF file itself
     params={
@@ -59,29 +61,41 @@ osm_north_america = DataSource(
     }
 )
 
-osm_us = DataSource(
-    name='osm_us',
-    source_type='https',
-    url='https://download.geofabrik.de/north-america/us-latest.osm.pbf',
-    format='pbf',
-    output_dir='osm/us_pbf',
-    params={
-        'layer_type': 'points',
-        'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
-    }
-)
+# osm_north_america = DataSource(
+#     name='osm_north_america',
+#     source_type='https',
+#     url='https://download.geofabrik.de/north-america-latest.osm.pbf',
+#     format='pbf',
+#     output_dir='osm/north_america_pbf', # Specific for the PBF file itself
+#     params={
+#         'layer_type': 'points',
+#         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
+#     }
+# )
 
-osm_canada = DataSource(
-    name='osm_canada',
-    source_type='https',
-    url='https://download.geofabrik.de/north-america/canada-latest.osm.pbf',
-    format='pbf',
-    output_dir='osm/canada_pbf',
-    params={
-        'layer_type': 'points',
-        'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
-    }
-)
+# osm_us = DataSource(
+#     name='osm_us',
+#     source_type='https',
+#     url='https://download.geofabrik.de/north-america/us-latest.osm.pbf',
+#     format='pbf',
+#     output_dir='osm/us_pbf',
+#     params={
+#         'layer_type': 'points',
+#         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
+#     }
+# )
+
+# osm_canada = DataSource(
+#     name='osm_canada',
+#     source_type='https',
+#     url='https://download.geofabrik.de/north-america/canada-latest.osm.pbf',
+#     format='pbf',
+#     output_dir='osm/canada_pbf',
+#     params={
+#         'layer_type': 'points',
+#         'sql_filter': "place IN ('city', 'town', 'village', 'hamlet')"
+#     }
+# )
 
 # Native territories data
 native_territories = DataSource(
@@ -323,8 +337,8 @@ def register_all_sources():
         hydrosheds_lakes,
         hydrosheds_basins,
         osm_north_america,
-        osm_us,
-        osm_canada,
+        # osm_us,
+        # osm_canada,
         native_territories,
         native_languages,
         native_treaties,
