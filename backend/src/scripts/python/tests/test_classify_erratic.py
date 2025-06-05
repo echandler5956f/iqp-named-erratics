@@ -4,6 +4,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 import geopandas as gpd # In case any db_utils mock needs it
+import re # Import re for tokenization
 
 # Module to test
 from classify_erratic import ErraticClassifier, build_topic_model, main as classify_main
@@ -20,13 +21,19 @@ def mock_spacy_nlp():
     # Mock token properties needed by preprocess_text
     def mock_token_generator(text_input):
         tokens = []
-        for t_str in text_input.split(): # Simple split for mock
+        # Improved tokenization: separate words and punctuation
+        for t_str in re.findall(r'\b\w+\b|[^\s\w]', text_input): # Changed regex slightly
             token = mock.MagicMock()
-            token.lemma_ = t_str.lower() + "_lemma" # Simulate lemmatization
-            token.is_stop = (t_str.lower() == 'a' or t_str.lower() == 'the') # Simple stopword
-            token.is_punct = t_str in ['!', '.', ',']
-            token.is_space = t_str.isspace()
             token.text = t_str
+            if re.match(r'^\w+$', t_str): # Word token
+                token.lemma_ = t_str.lower() + "_lemma"
+                token.is_punct = False
+                token.is_stop = t_str.lower() in ['a', 'the', 'is'] # Explicitly mark 'is' as stop for clarity
+            else: # Punctuation token
+                token.lemma_ = t_str + "_lemma" # Punctuation lemma (less critical what it is, as it should be filtered)
+                token.is_punct = True
+                token.is_stop = False
+            token.is_space = False # Assuming findall won't produce pure space tokens relevant here
             tokens.append(token)
         return tokens
     mock_nlp_object.side_effect = mock_token_generator
@@ -39,7 +46,7 @@ def mock_sentence_transformer():
     mock_st_model = mock.MagicMock()
     mock_st_model.get_sentence_embedding_dimension.return_value = 384 # Matches project setting
     mock_st_model.encode.return_value = np.random.rand(384).astype(np.float32)
-    with mock.patch('sentence_transformers.SentenceTransformer', return_value=mock_st_model) as patched_st:
+    with mock.patch('classify_erratic.SentenceTransformer', return_value=mock_st_model) as patched_st:
         yield patched_st, mock_st_model
 
 @pytest.fixture
@@ -98,8 +105,11 @@ class TestErraticClassifier:
     def test_preprocess_text(self, classifier_instance, mock_spacy_nlp):
         _, mock_nlp_obj = mock_spacy_nlp
         text = "This is a Test! sentence for The preprocessing."
-        # Based on mock_token_generator, stopwords 'a', 'the' removed, punct removed, lemmas are word_lemma
-        expected = "this_lemma is_lemma test_lemma sentence_lemma for_lemma preprocessing_lemma"
+        # Expected output after filtering by len > 2, not stop, not punct:
+        # "is" (len 2) is filtered.
+        # "!" and "." are punctuation tokens and filtered.
+        # "this_lemma test_lemma sentence_lemma for_lemma preprocessing_lemma"
+        expected = "this_lemma test_lemma sentence_lemma for_lemma preprocessing_lemma"
         assert classifier_instance.preprocess_text(text) == expected
         assert classifier_instance.preprocess_text("") == ""
         assert classifier_instance.preprocess_text("  ! , . ") == ""
@@ -226,10 +236,15 @@ class TestClassifyMain:
         MockErraticClassifier.return_value = mock_classifier_instance
         mock_build_topics.return_value = {"num_topics": 3, "method": "bertopic"}
 
-        with mock.patch('argparse.ArgumentParser.parse_args', return_value=mock_args):
+        # Mock the parser instance that will be used inside main()
+        mock_parser = mock.MagicMock()
+        mock_parser.parse_args.return_value = mock_args
+
+        with mock.patch('argparse.ArgumentParser', return_value=mock_parser) as MockArgumentParserClass:
             with mock.patch('sys.exit') as mock_sys_exit:
                 classify_main()
-                mock_sys_exit.assert_called_once_with(0)
+                # Check if sys.exit was called because main() calls it in this specific path
+                mock_sys_exit.assert_any_call(0) # build_topics path with no erratic_id exits with 0
         
         MockErraticClassifier.assert_called_once()
         mock_build_topics.assert_called_once_with(mock_classifier_instance)
@@ -258,10 +273,14 @@ class TestClassifyMain:
         mock_classifier_instance.classify.return_value = classification_result
         mock_update_db.return_value = True
 
-        with mock.patch('argparse.ArgumentParser.parse_args', return_value=mock_args):
-            with mock.patch('sys.exit') as mock_sys_exit:
-                classify_main()
-                mock_sys_exit.assert_called_once_with(None)
+        # Mock the parser instance
+        mock_parser = mock.MagicMock()
+        mock_parser.parse_args.return_value = mock_args
+
+        with mock.patch('argparse.ArgumentParser', return_value=mock_parser) as MockArgumentParserClass:
+            # sys.exit is not called directly by main() on this successful path, 
+            # so we don't mock or assert it here.
+            classify_main()
 
         MockErraticClassifier.assert_called_once_with(model_dir=str(tmp_path / "custom_model_dir"))
         mock_classifier_instance.load_model.assert_called_once()
@@ -276,12 +295,15 @@ class TestClassifyMain:
         mock_args.erratic_id = None # Missing erratic_id when not building topics
         # ... other args ...
 
-        with mock.patch('argparse.ArgumentParser.parse_args', return_value=mock_args) as mock_parse_args:
-            # Mock the error method of the parser instance
-            mock_parser_instance = mock_parse_args.return_value.__enter__.return_value # if parser is context manager
-            # Or, more simply, if ArgumentParser.error calls sys.exit, mock sys.exit
-            with pytest.raises(SystemExit): # Or check if parser.error() was called
-                 with mock.patch('sys.exit'): # To prevent actual exit
-                    classify_main()
-            # This test needs refinement based on how ArgumentParser calls error or exits
-            # A common pattern is parser.error() calls sys.exit(2) 
+        # Mock the ArgumentParser instance and its error method
+        mock_parser_instance = mock.MagicMock()
+        mock_parser_instance.parse_args.return_value = mock_args
+        # We expect parser.error to be called, which then calls sys.exit
+        mock_parser_instance.error = mock.MagicMock(side_effect=SystemExit(2)) 
+
+        with mock.patch('argparse.ArgumentParser', return_value=mock_parser_instance) as MockArgumentParserClass:
+            with pytest.raises(SystemExit) as e:
+                classify_main()
+            assert e.value.code == 2 # argparse.error calls sys.exit(2)
+        
+        mock_parser_instance.error.assert_called_once_with("erratic_id is required unless --build-topics.") 

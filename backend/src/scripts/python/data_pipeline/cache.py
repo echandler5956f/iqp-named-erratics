@@ -92,12 +92,17 @@ class CacheManager:
                 with open(cache_path + ".geom_col", 'w') as f:
                     f.write(geometry_col)
                 
-                # Convert geometry to WKB
-                gdf_copy['_wkb'] = gdf_copy[geometry_col].apply(
-                    lambda geom: wkb_dumps(geom) if geom else None
-                )
+                # Handle WKB conversion
+                if gdf_copy.empty or gdf_copy[geometry_col].apply(lambda geom: geom is None or geom.is_empty).all():
+                    # If GDF is empty or all geometries are empty/None, create an empty _wkb column
+                    gdf_copy['_wkb'] = None
+                else:
+                    # Convert actual geometries to WKB
+                    gdf_copy['_wkb'] = gdf_copy[geometry_col].apply(
+                        lambda geom: wkb_dumps(geom) if geom and not geom.is_empty else None
+                    )
                 
-                # Drop the geometry column
+                # Drop the original geometry column
                 gdf_copy = gdf_copy.drop(columns=[geometry_col])
             
             # Ensure string column names

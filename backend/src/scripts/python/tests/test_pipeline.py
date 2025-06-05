@@ -80,24 +80,16 @@ class TestDataPipeline:
     def test_load_cache_miss_successful_load_process_save(self, mock_os_exists, mock_proc_factory, mock_load_factory, 
                                                        pipeline_instance, mock_registry, mock_cache_manager, 
                                                        sample_source_def, mock_file_loader, mock_geojson_processor):
-        mock_os_exists.return_value = True # Assume source.path exists for file type
-        mock_registry.get.return_value = sample_source_def
-        mock_cache_manager.load.return_value = None # Cache miss
-
-        mock_load_factory.get_loader.return_value = mock_file_loader
-        # _acquire_data will use source.path directly for 'file' type if it exists, so loader.load might not be called for this specific setup
-        # Let's change source_type to http to force loader usage for this test.
+        # Use http source to force loader usage
         http_source_def = DataSource(**{**sample_source_def.__dict__, 'source_type': 'http', 'url': 'http://fake.url/data.geojson', 'path': None})
         mock_registry.get.return_value = http_source_def
-        
-        # _acquire_data specific mocks
-        # It will try to see if download_path exists first. Let's make it not exist.
-        def side_effect_os_exists(path_arg):
-            if "fake.url" in path_arg or "sample_data.geojson" in path_arg: # a bit specific, better to make it more robust
-                 # for the generated download_path, pretend it doesn't exist to force download
-                if http_source_def.name in path_arg: return False 
-            return True # for other general checks if any
-        mock_os_exists.side_effect = side_effect_os_exists
+        mock_cache_manager.load.return_value = None # Cache miss
+
+        # Ensure the download path doesn't exist to force loader call
+        mock_os_exists.return_value = False  # Make all paths appear non-existent
+
+        mock_load_factory.get_loader.return_value = mock_file_loader
+        mock_file_loader.load.return_value = True  # Simulate successful download
 
         processed_gdf = gpd.GeoDataFrame({'data': ['processed']})
         mock_geojson_processor.process.return_value = processed_gdf

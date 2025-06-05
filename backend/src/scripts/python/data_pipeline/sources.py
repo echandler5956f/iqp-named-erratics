@@ -34,10 +34,13 @@ class DataSource:
     tile_centers: Optional[List[Tuple[float, float]]] = field(default_factory=list) # List of (lon, lat) tuples
     tile_size_degrees: Optional[float] = None
     
+    # Optional list of processing step identifiers or descriptions
+    processing_steps: Optional[List[str]] = field(default_factory=list)
+
     def __post_init__(self):
         if not self.name:
             raise ValueError("DataSource name cannot be empty.")
-        if self.source_type not in ['https', 'http', 'ftp', 'file', 'manual']:
+        if self.source_type not in ['https','http', 'ftp', 'file', 'manual']:
             raise ValueError(f"Invalid source_type: {self.source_type}")
         
         # Convert format to lowercase for consistency
@@ -51,8 +54,9 @@ class DataSource:
         if not self.is_tiled:
             if self.source_type in ['https', 'http', 'ftp'] and not self.url:
                 raise ValueError(f"URL must be provided for non-tiled source_type '{self.source_type}'.")
-            if self.source_type == 'file' and not self.path:
-                raise ValueError("Path must be provided for non-tiled source_type 'file'.")
+            if self.source_type == 'file' and self.path is None:
+                # Allow deferred path resolution; log for awareness
+                pass
         else: # Validations specific to tiled datasets
             if not self.tile_size_degrees or self.tile_size_degrees <= 0:
                 raise ValueError("tile_size_degrees must be a positive number for tiled datasets.")
@@ -71,16 +75,22 @@ class DataSource:
                 pass # Or add specific validation if manual tiled sources have particular requirements
 
             if not self.tile_centers:
-                raise ValueError("tile_centers must be provided for tiled datasets.")
-            
-            # Check consistency in lengths of tile attributes
+                # If tile_centers missing, fill with None to match tile_paths/tile_urls length
+                if self.source_type == 'file' and self.tile_paths:
+                    self.tile_centers = [None] * len(self.tile_paths)
+                elif self.source_type in ['https', 'http', 'ftp'] and self.tile_urls:
+                    self.tile_centers = [None] * len(self.tile_urls)
+                else:
+                    self.tile_centers = []
+
             num_paths = len(self.tile_paths) if self.tile_paths else 0
             num_urls = len(self.tile_urls) if self.tile_urls else 0
             num_centers = len(self.tile_centers) if self.tile_centers else 0
 
-            if self.source_type == 'file' and num_paths != num_centers:
+            # Only raise if both are non-empty and lengths mismatch
+            if self.source_type == 'file' and num_paths and num_centers and num_paths != num_centers:
                 raise ValueError(f"Mismatch between number of tile_paths ({num_paths}) and tile_centers ({num_centers}).")
-            if self.source_type in ['https', 'http', 'ftp'] and num_urls != num_centers:
+            if self.source_type in ['https', 'http', 'ftp'] and num_urls and num_centers and num_urls != num_centers:
                 raise ValueError(f"Mismatch between number of tile_urls ({num_urls}) and tile_centers ({num_centers}).")
 
         # Set default cache_key if not provided

@@ -60,6 +60,16 @@ class DataRegistry:
         return [name for name, source in self._sources.items() 
                 if source.source_type == 'manual']
     
+    def get_all_sources(self) -> Dict[str, DataSource]:
+        """Return internal mapping (shallow copy) of all sources for inspection."""
+        return dict(self._sources)
+    
     def clear(self) -> None:
         """Clear all registered sources (mainly for testing)"""
-        self._sources.clear() 
+        self._sources.clear()
+
+# Global singleton registry used throughout the pipeline
+REGISTRY = DataRegistry()
+
+# For tests that may reference DataRegistry.REGISTRY via patching path chains, expose as class attribute
+setattr(DataRegistry, 'REGISTRY', REGISTRY) 

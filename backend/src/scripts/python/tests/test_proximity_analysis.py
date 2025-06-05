@@ -122,7 +122,7 @@ class TestCalculateProximity:
         
         # Check a few key proximity results (exact distances depend on mock data & haversine)
         assert 'nearest_water_body_dist' in pa
-        assert pa['nearest_water_body_type'] == 'river' # river is closer in mock GDFs
+        assert pa['nearest_water_body_type'] == 'lake' # lake is closer in mock GDFs based on coordinates
         assert 'nearest_native_territory_dist' in pa
         assert 'nearest_settlement_dist' in pa
         assert 'nearest_natd_road_dist' in pa
@@ -151,15 +151,17 @@ class TestCalculateProximity:
         assert results['error'] == "Missing location data for erratic"
 
     def test_load_data_returns_none_for_source(self, mock_db_load_details, mock_pipeline_load_data,
-                                               mock_geo_utils_dem, mock_geo_utils_raster_ops, mock_erratic_data_valid):
+                                               mock_geo_utils_dem, mock_geo_utils_raster_ops, mock_erratic_data_valid,
+                                               gdf_rivers, gdf_territories, gdf_settlements, gdf_natd_roads, gdf_forest_trails):
         # Make one of the load_data calls return None (or empty GDF)
         def selective_none_load(source_name, **kwargs):
             if source_name == 'hydrosheds_lakes': return None
             # Use the original side_effect for others
-            original_side_effect = mock_pipeline_load_data._raw_side_effect # Access original through a hypothetical attribute if it was complex
-                                                                        # For this simple case, just reimplement part of it:
-            if source_name == 'hydrosheds_rivers': return gdf_rivers() # Assuming gdf_rivers fixture is available or imported
-            # ... and so on for other sources needed, or make it return empty GDF by default
+            if source_name == 'hydrosheds_rivers': return gdf_rivers
+            if source_name == 'native_territories': return gdf_territories
+            if source_name == 'osm_north_america': return gdf_settlements
+            if source_name == 'natd_roads': return gdf_natd_roads
+            if source_name == 'forest_trails': return gdf_forest_trails
             return gpd.GeoDataFrame()
         
         mock_pipeline_load_data.side_effect = selective_none_load

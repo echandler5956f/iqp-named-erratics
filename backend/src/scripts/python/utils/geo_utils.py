@@ -16,16 +16,12 @@ from psycopg2.extras import RealDictCursor # To get results as dicts
 import os # For path operations
 import sys # Added for sys.path manipulation
 
+# Attempt rasterio import once and flag availability for tests
 try:
     import rasterio
-    import rasterio.sample
-    from rasterio.windows import Window
-    from rasterio.warp import calculate_default_transform, reproject, Resampling # For potential reprojection
     RASTERIO_AVAILABLE = True
 except ImportError:
     RASTERIO_AVAILABLE = False
-    # Logger might not be configured yet, use print for this critical warning if it occurs early.
-    print("WARNING: rasterio library not found. DEM processing functions will not be available.")
 
 # Add the 'python' directory (which contains 'utils' and 'data_pipeline') to sys.path
 # to allow importing sibling packages like data_pipeline.
@@ -254,6 +250,8 @@ def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
         half_size = tile_size / 2.0
 
         for i, center_coord in enumerate(gmted_source.tile_centers):
+            if center_coord is None:
+                continue
             lon_c, lat_c = center_coord
             
             lat_min = lat_c - half_size
@@ -306,20 +304,17 @@ def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[
     feature_data = None
     if feature_identifier is not None:
         try:
-            # Check if the identifier likely corresponds to the GeoDataFrame index
-            if isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
-                 feature_data = features_gdf.loc[feature_identifier].to_dict()
-            # Otherwise, maybe it corresponds to an 'id' column or similar
-            elif 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
-                 # Handle potential multiple matches if 'id' isn't unique (though it should be)
+            # Priority 1: Check if 'id' column exists and feature_identifier matches a value in it
+            if 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
                  matching_features = features_gdf[features_gdf['id'] == feature_identifier]
                  if not matching_features.empty:
+                     # Assume first match if IDs are not strictly unique, though they should be.
                      feature_data = matching_features.iloc[0].to_dict()
+            # Priority 2: If not found by 'id' column, check if feature_identifier corresponds to the GeoDataFrame index
+            elif isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
+                 feature_data = features_gdf.loc[feature_identifier].to_dict()
             else:
-                 # Fallback if ID doesn't match index or 'id' column
-                 # This case might indicate an issue in how feature_id was generated/stored.
-                 logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame index or 'id' column.")
-                 # Pass, feature_data remains None
+                 logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame 'id' column or index.")
 
         except Exception as e:
              logger.error(f"Error retrieving feature data for identifier {feature_identifier}: {e}")
@@ -575,7 +570,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
             win_height = min(src.height - win_row_off, 2 * radius_px_y + 1)
             win_width = min(src.width - win_col_off, 2 * radius_px_x + 1)
             
-            window = Window(win_col_off, win_row_off, win_width, win_height)
+            window = rasterio.windows.Window(win_col_off, win_row_off, win_width, win_height)
             
             # Read data within the window
             window_data = src.read(1, window=window)
@@ -598,7 +593,7 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
             # Calculate TRI (Terrain Ruggedness Index) for the center pixel (requires 3x3 window)
             # Read a 3x3 window centered on the point
             if row > 0 and row < src.height - 1 and col > 0 and col < src.width - 1:
-                tri_window_data = src.read(1, window=Window(col-1, row-1, 3, 3))
+                tri_window_data = src.read(1, window=rasterio.windows.Window(col-1, row-1, 3, 3))
                 if nodata_val is not None:
                     tri_window_data = np.where(tri_window_data == nodata_val, np.nan, tri_window_data).astype(float)
                 else:
@@ -748,3 +743,69 @@ def calculate_relative_position(point: Point, reference_point: Point) -> Dict[st
         'bearing_degrees': bearing,
         'direction': cardinal
     }
+
+def estimate_displacement_distance(latitude: float) -> float:
+    """Very rough proxy for glacial displacement distance based on latitude.
+    This is just a placeholder for testing – real logic would use ice sheet models.
+    """
+    try:
+        lat = float(latitude)
+    except (ValueError, TypeError):
+        return 0.0
+    # Simple heuristic: colder (higher latitude) potentially longer transport
+    return max(0.0, (90 - abs(lat)) * 10)  # e.g., 0-900 km
+
+def calculate_accessibility_score(road_dist_m: float, settlement_dist_m: float) -> float:
+    """Calculate an accessibility score given road and settlement distances.
+
+    Lower distances yield higher accessibility. Score scaled 0 (inaccessible) – 10 (very accessible).
+    """
+    try:
+        road = float(road_dist_m)
+        settle = float(settlement_dist_m)
+    except (ValueError, TypeError):
+        return 0.0
+
+    # Simple inverse relationship with cap
+    max_dist = 10000  # 10 km as reference for minimal accessibility
+    norm = max(0.0, 1 - min((road + settle) / (2 * max_dist), 1))
+    return round(norm * 10, 2)
+
+def find_nearest_water(point: Point, rivers_gdf: gpd.GeoDataFrame, lakes_gdf: gpd.GeoDataFrame) -> Tuple[float, str, str]:
+    """
+    Find the nearest water feature to a point from in-memory GeoDataFrames.
+    
+    Args:
+        point: Point to find the nearest water feature to
+        rivers_gdf: GeoDataFrame with rivers
+        lakes_gdf: GeoDataFrame with lakes
+        
+    Returns:
+        Tuple of (distance, water_name, water_type)
+    """
+    if rivers_gdf.empty and lakes_gdf.empty:
+        return float('inf'), '', ''
+    
+    best_distance = float('inf')
+    best_name = ''
+    best_type = ''
+    
+    # Check rivers
+    if not rivers_gdf.empty:
+        rivers_gdf = rivers_gdf.copy()
+        river_feature, river_dist = find_nearest_feature(point, rivers_gdf)
+        if river_dist < best_distance:
+            best_distance = river_dist
+            best_name = river_feature.get('HYR_NAME', '') if river_feature else ''
+            best_type = 'river'
+    
+    # Check lakes
+    if not lakes_gdf.empty:
+        lakes_gdf = lakes_gdf.copy()
+        lake_feature, lake_dist = find_nearest_feature(point, lakes_gdf)
+        if lake_dist < best_distance:
+            best_distance = lake_dist
+            best_name = lake_feature.get('Lake_name', '') if lake_feature else ''
+            best_type = 'lake'
+    
+    return best_distance, best_name, best_type

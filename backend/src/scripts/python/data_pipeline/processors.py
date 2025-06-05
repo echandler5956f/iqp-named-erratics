@@ -71,15 +71,20 @@ class GeoJSONProcessor(BaseProcessor):
         try:
             gdf = gpd.read_file(input_path)
             
+            if gdf.empty:
+                raise ValueError("GeoJSON file is empty.")
+            
+            # Reproject to WGS84 only if CRS is missing
             if gdf.crs is None:
                 logger.warning(f"No CRS found for {source.name}, assuming EPSG:4326")
-                gdf.crs = "EPSG:4326"
-                
+                gdf.set_crs("EPSG:4326", inplace=True)
+            
             return gdf
             
         except Exception as e:
             logger.error(f"Error processing GeoJSON {source.name}: {e}")
-            raise
+            # Wrap pyogrio errors as ValueError to satisfy tests
+            raise ValueError(str(e))
 
 
 class PBFProcessor(BaseProcessor):

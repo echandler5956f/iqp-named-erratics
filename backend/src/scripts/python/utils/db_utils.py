@@ -102,10 +102,17 @@ def load_erratic_details_by_id(erratic_id: int) -> Optional[Dict]:
                 WHERE e.id = %s;
             """, (erratic_id,))
             row = cursor.fetchone()
-            if row:
+            if row is not None:
                 # Convert numeric fields from string if necessary (RealDictCursor might return them as strings)
                 for key in ['longitude', 'latitude', 'elevation', 'size_meters']:
-                    if row[key] is not None: row[key] = float(row[key])
+                    if row.get(key) is not None:
+                        try:
+                            row[key] = float(row[key])
+                        except (ValueError, TypeError):
+                            logger.warning(f"Could not convert {key}='{row[key]}' to float for erratic ID {erratic_id}")
+                            # Decide on handling: keep as is, set to None, or raise error
+                            # For now, let it pass, might result in string type if conversion fails
+                            pass 
                 logger.info(f"Details loaded for erratic ID: {erratic_id}")
                 return dict(row)
             else:
@@ -146,18 +153,16 @@ def update_erratic_analysis_results(erratic_id: int, analysis_data: Dict[str, An
 
     try:
         conn = get_db_connection(autocommit=False) # Use autocommit=False for explicit transaction control
-        with conn.cursor() as cursor:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             # Check if record exists
             cursor.execute('SELECT "erraticId" FROM "ErraticAnalyses" WHERE "erraticId" = %s;', (erratic_id,))
-            exists = cursor.fetchone()
+            exists_row = cursor.fetchone()
 
             # pgvector expects embeddings as a string like '[1,2,3]' or list if adapter is registered
             if 'vector_embedding' in db_data and isinstance(db_data['vector_embedding'], list):
-                # psycopg2 can often handle lists directly for array types or if an adapter for VECTOR is set up.
-                # If direct list insertion fails for VECTOR, convert to string: str(db_data['vector_embedding'])
-                pass # Keep as list for now, rely on psycopg2 adapter or direct cast in SQL
+                pass 
 
-            if exists:
+            if exists_row is not None:
                 set_clause = ", ".join([f'\"{col}\" = %s' for col in db_data.keys()])
                 sql = f'UPDATE "ErraticAnalyses" SET {set_clause}, "updatedAt" = NOW() WHERE "erraticId" = %s;'
                 values = list(db_data.values()) + [erratic_id]
@@ -172,7 +177,7 @@ def update_erratic_analysis_results(erratic_id: int, analysis_data: Dict[str, An
             
             cursor.execute(sql, values)
             conn.commit()
-            logger.info(f"Successfully {'updated' if exists else 'inserted'} analysis data for erratic ID: {erratic_id}")
+            logger.info(f"Successfully {'updated' if exists_row is not None else 'inserted'} analysis data for erratic ID: {erratic_id}")
             return True
     except Exception as e:
         if conn: conn.rollback()

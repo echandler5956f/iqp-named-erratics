@@ -243,6 +243,7 @@ def main():
         # Ensure JSON output for Node.js service compatibility on error
         print(json.dumps({"error": analysis_results['error'], "erratic_id": args.erratic_id}))
         sys.exit(1)
+        return
     
     # Prepare payload for DB update - this is the 'proximity_analysis' sub-dictionary
     db_update_payload = analysis_results.get('proximity_analysis', {})
@@ -262,7 +263,9 @@ def main():
     # Print complete results to stdout for Node.js service
     print(json.dumps(analysis_results, indent=2))
     logger.info("Proximity_analysis.py script finished.")
+    # Exit cleanly for CLI and tests
+    sys.exit(None)
 
 if __name__ == "__main__":
     # sys.path manipulation is done at the top of the file
-    sys.exit(main()) 
+    main() 
