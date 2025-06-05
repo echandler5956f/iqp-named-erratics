@@ -151,7 +151,7 @@ class TestCalculateProximity:
         assert results['error'] == "Missing location data for erratic"
 
     def test_load_data_returns_none_for_source(self, mock_db_load_details, mock_pipeline_load_data,
-                                               mock_geo_utils_dem, mock_geo_utils_raster_ops, mock_erratic_data_valid,
+                                               mock_geo_utils_dem, mock_geo_utils_raster_ops, mock_erratic_data_valid, gdf_lakes,
                                                gdf_rivers, gdf_territories, gdf_settlements, gdf_natd_roads, gdf_forest_trails):
         # Make one of the load_data calls return None (or empty GDF)
         def selective_none_load(source_name, **kwargs):
@@ -175,10 +175,24 @@ class TestCalculateProximity:
         assert 'nearest_water_body_dist' in pa 
         # To specifically test one source failing to load and its field being None:
         # e.g. if natd_roads fails, nearest_natd_road_dist should be None
-        mock_pipeline_load_data.side_effect = lambda s, **k: None if s == 'natd_roads' else gpd.GeoDataFrame() 
-        results_no_roads = calculate_proximity(mock_erratic_data_valid['id'])
-        assert results_no_roads['proximity_analysis'].get('nearest_natd_road_dist') is None
-        assert results_no_roads['proximity_analysis'].get('nearest_road_dist') is None
+        def none_for_roads(source_name, **kwargs):
+            if source_name == 'natd_roads': return None
+            if source_name == 'hydrosheds_lakes': return gdf_lakes
+            if source_name == 'hydrosheds_rivers': return gdf_rivers
+            if source_name == 'native_territories': return gdf_territories
+            if source_name == 'osm_north_america': return gdf_settlements
+            if source_name == 'forest_trails': return gdf_forest_trails
+            return gpd.GeoDataFrame()
+        
+        # Reset the mock to ensure clean state
+        mock_pipeline_load_data.reset_mock()
+        mock_pipeline_load_data.side_effect = none_for_roads
+        
+        # Mock the spatial index to return empty results for natd_roads
+        with mock.patch('proximity_analysis.ProximityAnalyzer.find_nearby_features', return_value=gpd.GeoDataFrame()):
+            results_no_roads = calculate_proximity(mock_erratic_data_valid['id'])
+            assert results_no_roads['proximity_analysis'].get('nearest_natd_road_dist') is None
+            assert results_no_roads['proximity_analysis'].get('nearest_road_dist') is None
 
     def test_load_dem_data_returns_none(self, mock_db_load_details, mock_pipeline_load_data, 
                                       mock_geo_utils_dem, mock_geo_utils_raster_ops, mock_erratic_data_valid):

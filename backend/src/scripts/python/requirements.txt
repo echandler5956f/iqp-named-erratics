@@ -35,6 +35,9 @@ matplotlib>=3.5.0  # For terrain visualization if needed
 # Testing Framework
 pytest>=7.0.0
 
+# Concurrency utilities
+portalocker>=2.8.2
+
 # After pip installing these packages, run: 
 # python -m spacy download en_core_web_md
 # python -m spacy download en_core_web_lg

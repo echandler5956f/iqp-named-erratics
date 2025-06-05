@@ -12,11 +12,11 @@ from .registry import DataRegistry
 from .pipeline import DataPipeline
 from .sources import DataSource
 
-# Initialize the global registry
-registry = DataRegistry()
-
-# Import data sources to register them
+# Import data sources to register them to the singleton REGISTRY
 from . import data_sources
+
+# Use the singleton registry that data_sources populated
+from .registry import REGISTRY as registry
 
 # Main entry point for backward compatibility
 def load_data(source_name: str, **kwargs):
@@ -50,4 +50,23 @@ def add_manual_data(name: str, local_path: str, format: str = 'auto',
     """
     registry.add_manual_source(name, local_path, format, description, **kwargs)
 
-__all__ = ['DataRegistry', 'DataPipeline', 'DataSource', 'registry', 'load_data', 'add_manual_data'] 
+# --------------------------------------------
+# Optional helper: prefetch all data sources
+# --------------------------------------------
+
+def prefetch_all(force_reload: bool = False):
+    """Eagerly download + process all registered data sources.
+
+    Useful for CI pipelines or when preparing a fresh compute node.  Errors
+    are logged but do not raise so that the loop continues.
+    """
+    pipeline = DataPipeline(registry)
+    for name in registry.list_sources():
+        try:
+            pipeline.load(name, force_reload=force_reload)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("Prefetch failed for %s: %s", name, exc)
+
+__all__ = ['DataRegistry', 'DataPipeline', 'DataSource', 'registry', 'load_data', 'add_manual_data']
+__all__.append('prefetch_all') 

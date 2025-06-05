@@ -13,6 +13,9 @@ import subprocess
 import logging
 from typing import Optional, Any
 from abc import ABC, abstractmethod
+import tempfile
+import hashlib
+import uuid
 
 from .sources import DataSource
 
@@ -24,7 +27,7 @@ class BaseProcessor(ABC):
     """Abstract base class for data processors"""
     
     @abstractmethod
-    def process(self, source: DataSource, input_path: str) -> Any:
+    def process(self, source: DataSource, input_path: str, *, bbox=None, keep_cols=None) -> Any:
         """Process data from input_path according to source configuration"""
         pass
 
@@ -32,24 +35,42 @@ class BaseProcessor(ABC):
 class ShapefileProcessor(BaseProcessor):
     """Processor for Shapefile format"""
     
-    def process(self, source: DataSource, input_path: str) -> gpd.GeoDataFrame:
+    def process(self, source: DataSource, input_path: str, *, bbox=None, keep_cols=None) -> gpd.GeoDataFrame:
         """Load shapefile into GeoDataFrame"""
         try:
-            # If input is a zip file, extract first
             if input_path.endswith('.zip'):
-                extract_dir = input_path.replace('.zip', '_extracted')
-                with zipfile.ZipFile(input_path, 'r') as zf:
-                    zf.extractall(extract_dir)
-                
-                # Find .shp file in extracted contents
+                extract_dir = input_path.replace('.zip', '_unzipped')
+                # Extract once; subsequent calls reuse.
+                shp_path = None
+                if not os.path.exists(extract_dir):
+                    os.makedirs(extract_dir, exist_ok=True)
+                    with zipfile.ZipFile(input_path, 'r') as zf:
+                        zf.extractall(extract_dir)
+
+                # Locate .shp within extracted directory
                 for root, _, files in os.walk(extract_dir):
-                    for file in files:
-                        if file.endswith('.shp'):
-                            input_path = os.path.join(root, file)
+                    for f in files:
+                        if f.endswith('.shp'):
+                            shp_path = os.path.join(root, f)
                             break
+                    if shp_path:
+                        break
+
+                if shp_path is None:
+                    raise FileNotFoundError("No .shp file found after extracting archive")
+
+                input_path = shp_path  # Use this for read_file
             
-            # Load the shapefile
-            gdf = gpd.read_file(input_path)
+            # Try pyogrio for fast windowed read
+            try:
+                import pyogrio
+                gdf = pyogrio.read_dataframe(input_path, bbox=bbox, columns=keep_cols)
+            except Exception:
+                # geopandas with bbox filter (fiona) – slower but ubiquitous
+                gdf = gpd.read_file(input_path, bbox=bbox)
+                if keep_cols:
+                    keep_cols_existing = [c for c in keep_cols if c in gdf.columns]
+                    gdf = gdf[keep_cols_existing + [gdf.geometry.name]]
             
             # Ensure CRS is set
             if gdf.crs is None:
@@ -66,13 +87,17 @@ class ShapefileProcessor(BaseProcessor):
 class GeoJSONProcessor(BaseProcessor):
     """Processor for GeoJSON format"""
     
-    def process(self, source: DataSource, input_path: str) -> gpd.GeoDataFrame:
+    def process(self, source: DataSource, input_path: str, *, bbox=None, keep_cols=None) -> gpd.GeoDataFrame:
         """Load GeoJSON into GeoDataFrame"""
         try:
-            gdf = gpd.read_file(input_path)
+            gdf = gpd.read_file(input_path, bbox=bbox)
             
             if gdf.empty:
                 raise ValueError("GeoJSON file is empty.")
+            
+            if keep_cols:
+                keep_cols_existing = [c for c in keep_cols if c in gdf.columns]
+                gdf = gdf[keep_cols_existing + [gdf.geometry.name]]
             
             # Reproject to WGS84 only if CRS is missing
             if gdf.crs is None:
@@ -90,7 +115,7 @@ class GeoJSONProcessor(BaseProcessor):
 class PBFProcessor(BaseProcessor):
     """Processor for OpenStreetMap PBF format"""
     
-    def process(self, source: DataSource, input_path: str) -> gpd.GeoDataFrame:
+    def process(self, source: DataSource, input_path: str, *, bbox=None, keep_cols=None) -> gpd.GeoDataFrame:
         """Convert PBF to GeoDataFrame using ogr2ogr"""
         try:
             # Extract parameters for PBF processing
@@ -98,7 +123,11 @@ class PBFProcessor(BaseProcessor):
             sql_filter = source.params.get('sql_filter', 'place IS NOT NULL')
             
             # Output path for GeoJSON
-            output_path = input_path.replace('.pbf', f'_{layer_type}.geojson')
+            output_path = input_path.replace('.pbf', f'_{layer_type}_{uuid.uuid4().hex[:8]}.geojson')
+            
+            # Ensure no pre-existing file blocks ogr2ogr
+            if os.path.exists(output_path):
+                os.remove(output_path)
             
             # Build ogr2ogr command
             cmd = [
@@ -111,6 +140,10 @@ class PBFProcessor(BaseProcessor):
                 '-lco', 'RFC7946=YES'
             ]
             
+            if bbox:
+                minx, miny, maxx, maxy = bbox
+                cmd.extend(['-spat', str(minx), str(miny), str(maxx), str(maxy)])
+            
             logger.info(f"Converting PBF with ogr2ogr: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True)
             
@@ -120,9 +153,16 @@ class PBFProcessor(BaseProcessor):
             # Load the resulting GeoJSON
             gdf = gpd.read_file(output_path)
             
+            if keep_cols:
+                keep_cols_existing = [c for c in keep_cols if c in gdf.columns]
+                gdf = gdf[keep_cols_existing + [gdf.geometry.name]]
+            
             # Clean up intermediate file if requested
             if source.params.get('cleanup_intermediate', True):
-                os.remove(output_path)
+                try:
+                    os.remove(output_path)
+                except FileNotFoundError:
+                    pass
                 
             return gdf
             

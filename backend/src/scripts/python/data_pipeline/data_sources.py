@@ -7,7 +7,7 @@ and registering it.
 """
 import os
 from .sources import DataSource
-from . import registry
+from .registry import REGISTRY
 
 # Define a base path for locally stored GIS data to make paths relative
 _LOCAL_GIS_DATA_BASE_PATH = os.path.abspath(os.path.join(
@@ -345,30 +345,30 @@ def register_all_sources():
         natd_roads,
         forest_trails,
         gmted_elevation_tiled,
-        glcc_nademl,
-        glcc_nabatsl20,
-        glcc_naigbpl20,
-        glcc_nalulcl20,
-        glcc_nandviapr92l,
-        glcc_nandviaug92l,
-        glcc_nandvidec92l,
-        glcc_nandvifeb93l,
-        glcc_nandvijan93l,
-        glcc_nandvijun92l,
-        glcc_nandvimar93l,
-        glcc_nandvimay92l,
-        glcc_nandvinov92l,
-        glcc_nandvioct92l,
-        glcc_nandvisep92l,
-        glcc_naogel20,
-        glcc_nasbm2l20,
-        glcc_naslcrl20,
-        glcc_naurbanl,
-        glcc_navll20
+        # glcc_nademl,
+        # glcc_nabatsl20,
+        # glcc_naigbpl20,
+        # glcc_nalulcl20,
+        # glcc_nandviapr92l,
+        # glcc_nandviaug92l,
+        # glcc_nandvidec92l,
+        # glcc_nandvifeb93l,
+        # glcc_nandvijan93l,
+        # glcc_nandvijun92l,
+        # glcc_nandvimar93l,
+        # glcc_nandvimay92l,
+        # glcc_nandvinov92l,
+        # glcc_nandvioct92l,
+        # glcc_nandvisep92l,
+        # glcc_naogel20,
+        # glcc_nasbm2l20,
+        # glcc_naslcrl20,
+        # glcc_naurbanl,
+        # glcc_navll20
     ]
     
     for source in sources:
-        registry.register(source)
+        REGISTRY.register(source)
 
     print(f"[data_sources.py] Registered {len(sources)} data sources.")
 

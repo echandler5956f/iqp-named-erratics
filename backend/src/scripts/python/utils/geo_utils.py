@@ -16,7 +16,13 @@ from psycopg2.extras import RealDictCursor # To get results as dicts
 import os # For path operations
 import sys # Added for sys.path manipulation
 
-# Attempt rasterio import once and flag availability for tests
+# --- CRITICAL: Ensure DataPipeline registry is populated early ---
+# This import executes data_sources.py, which calls register_all_sources()
+import data_pipeline.data_sources  # This MUST be imported before any registry access
+from data_pipeline.sources import DataSource
+# --- END CRITICAL IMPORTS ---
+
+RASTERIO_AVAILABLE = True
 try:
     import rasterio
     RASTERIO_AVAILABLE = True
@@ -30,24 +36,11 @@ python_dir = os.path.dirname(script_dir) # .../python
 if python_dir not in sys.path:
     sys.path.insert(0, python_dir)
 
-# Attempt to import pipeline components
-PIPELINE_AVAILABLE = False
-try:
-    # Import the global registry directly
-    from data_pipeline.registry import REGISTRY as GlobalDataRegistry
-    # Ensure data_sources are loaded once to populate the registry
-    import data_pipeline.data_sources
-    from data_pipeline.sources import DataSource
-    PIPELINE_AVAILABLE = True
-    # Configure logging here after basic imports are successful
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
-    logger.info("Successfully imported DataPipeline global REGISTRY. Pipeline available.")
-except ImportError as e:
-    # Configure logging even on import error to log the failure
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
-    logger.error(f"Failed to import DataPipeline REGISTRY: {e}. DEM loading will fail.")
+# Pipeline is available since we import at the top
+PIPELINE_AVAILABLE = True
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.info("Successfully imported DataPipeline global REGISTRY. Pipeline available.")
 
 
 # Earth radius in meters
@@ -110,7 +103,13 @@ def calculate_distances_to_features(point: Point, features_gdf: gpd.GeoDataFrame
         features_gdf: GeoDataFrame with features to calculate distances to
         
     Returns:
-        List of dictionaries with feature information and distances
+        List of dictionaries with feature information and distances.
+        Each dictionary contains:
+        - 'feature_id': The value of the 'id' attribute of the feature if present, otherwise the feature's original row index.
+        - 'row_index': The original 0-based row index of the feature in the input GeoDataFrame.
+        - 'distance': Calculated distance in meters.
+        - 'geometry_type': Type of the feature's geometry (e.g., 'Point', 'LineString').
+        - Optional attributes like 'name', 'type', 'class', 'category' if present on the feature.
     """
     if features_gdf.empty:
         return []
@@ -128,6 +127,11 @@ def calculate_distances_to_features(point: Point, features_gdf: gpd.GeoDataFrame
     results = []
     for idx, feature in features_gdf.iterrows():
         try:
+            # Skip features with null geometry
+            if feature.geometry is None:
+                logger.debug(f"Skipping feature {idx} with null geometry")
+                continue
+            
             # For point features
             if feature.geometry.geom_type == 'Point':
                 distance = haversine_distance(
@@ -148,6 +152,7 @@ def calculate_distances_to_features(point: Point, features_gdf: gpd.GeoDataFrame
                 'feature_id': getattr(feature, 'id', idx),
                 'distance': distance,  # in meters
                 'geometry_type': feature.geometry.geom_type
+                , 'row_index': idx
             }
             
             # Add common attributes if they exist
@@ -218,59 +223,57 @@ def load_dem_data(point: Optional[Point] = None) -> Optional[str]:
         or None if the global registry is unavailable, point not provided, no covering tile found,
         or the 'gmted_elevation_tiled' source is not configured correctly.
     """
-    if not PIPELINE_AVAILABLE or GlobalDataRegistry is None:
-        logger.error("DataPipeline REGISTRY is not available. Cannot load DEM data.")
+    if not PIPELINE_AVAILABLE:
+        logger.error("DataPipeline is not available. Cannot load DEM data.")
         return None
+
     if point is None:
         logger.warning("load_dem_data called without a specific point. Cannot determine DEM tile path.")
         return None
 
     try:
-        target_tiled_source_name = "gmted_elevation_tiled"
-        gmted_source: Optional[DataSource] = None
-        for source_name, source_obj in GlobalDataRegistry.get_all_sources().items():
-            if source_name == target_tiled_source_name and source_obj.is_tiled:
-                gmted_source = source_obj
-                break
+        # Import here to avoid circular imports
+        from data_pipeline.registry import REGISTRY
         
+        # Get the tiled DEM source
+        gmted_source = REGISTRY.get("gmted_elevation_tiled")
         if not gmted_source:
-            logger.error(f"Tiled DEM source '{target_tiled_source_name}' not found or not configured as tiled in the registry.")
-            return None
-
-        if not gmted_source.tile_centers or not gmted_source.tile_paths or not gmted_source.tile_size_degrees:
-            logger.error(f"Tiled DEM source '{target_tiled_source_name}' is missing tile_centers, tile_paths, or tile_size_degrees.")
+            available_sources = list(REGISTRY.get_all_sources().keys())
+            logger.error(f"gmted_elevation_tiled not found. Available: {available_sources}")
             return None
         
-        if len(gmted_source.tile_paths) != len(gmted_source.tile_centers):
-            logger.error(f"Mismatch in lengths of tile_paths and tile_centers for '{target_tiled_source_name}'.")
+        # Validate tiled source configuration
+        if not gmted_source.is_tiled:
+            logger.error(f"gmted_elevation_tiled is not configured as tiled")
             return None
-
-        logger.debug(f"Searching for DEM tile for point {point} in '{target_tiled_source_name}'.")
+            
+        if not all([gmted_source.tile_centers, gmted_source.tile_paths, gmted_source.tile_size_degrees]):
+            logger.error(f"gmted_elevation_tiled missing required tile metadata")
+            return None
+            
+        # Find the tile that contains this point
         tile_size = gmted_source.tile_size_degrees
         half_size = tile_size / 2.0
-
-        for i, center_coord in enumerate(gmted_source.tile_centers):
-            if center_coord is None:
-                continue
-            lon_c, lat_c = center_coord
+        
+        for i, (center_lon, center_lat) in enumerate(gmted_source.tile_centers):
+            # Calculate tile bounds
+            min_lat = center_lat - half_size
+            max_lat = center_lat + half_size  
+            min_lon = center_lon - half_size
+            max_lon = center_lon + half_size
             
-            lat_min = lat_c - half_size
-            lat_max = lat_c + half_size
-            lon_min = lon_c - half_size
-            lon_max = lon_c + half_size
-
-            # Check if the point is within the tile bounds (inclusive min, exclusive max for standard geo queries)
-            if (lat_min <= point.latitude < lat_max and
-                lon_min <= point.longitude < lon_max):
+            # Check if point is within this tile
+            if (min_lat <= point.latitude < max_lat and 
+                min_lon <= point.longitude < max_lon):
+                
                 tile_path = gmted_source.tile_paths[i]
                 if os.path.exists(tile_path):
-                    logger.info(f"Found DEM tile for point {point}: {tile_path}")
+                    logger.debug(f"Found DEM tile: {tile_path}")
                     return tile_path
                 else:
-                    logger.error(f"DEM tile path {tile_path} for point {point} does not exist on filesystem.")
-                    # Continue searching in case of misconfiguration, but this is an error.
+                    logger.warning(f"DEM tile {tile_path} does not exist")
         
-        logger.warning(f"No covering DEM tile found in '{target_tiled_source_name}' for point {point}.")
+        logger.debug(f"No DEM tile found for point {point}")
         return None
 
     except Exception as e:
@@ -291,52 +294,55 @@ def find_nearest_feature(point: Point, features_gdf: gpd.GeoDataFrame) -> Tuple[
     if features_gdf.empty:
         return None, float('inf')
     
-    distances = calculate_distances_to_features(point, features_gdf)
-    if not distances:
+    # Calculate distances to all features. This function is assumed to return a sorted list.
+    all_distances_info = calculate_distances_to_features(point, features_gdf)
+    if not all_distances_info:
         return None, float('inf')
     
-    # Get nearest feature
-    nearest = distances[0]
-    
-    # Get full feature data
-    # Correct handling for index or custom ID
-    feature_identifier = nearest.get('feature_id') 
-    feature_data = None
-    if feature_identifier is not None:
+    # Get the information for the nearest feature (the first in the sorted list)
+    nearest_feature_info = all_distances_info[0]
+    distance = nearest_feature_info.get('distance', float('inf'))
+    nearest_row_index = nearest_feature_info.get('row_index')
+
+    feature_data_dict: Optional[Dict] = None
+
+    if nearest_row_index is not None and nearest_row_index in features_gdf.index:
         try:
-            # Priority 1: Check if 'id' column exists and feature_identifier matches a value in it
-            if 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
-                 matching_features = features_gdf[features_gdf['id'] == feature_identifier]
-                 if not matching_features.empty:
-                     # Assume first match if IDs are not strictly unique, though they should be.
-                     feature_data = matching_features.iloc[0].to_dict()
-            # Priority 2: If not found by 'id' column, check if feature_identifier corresponds to the GeoDataFrame index
-            elif isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
-                 feature_data = features_gdf.loc[feature_identifier].to_dict()
-            else:
-                 logger.warning(f"Could not reliably map feature_id {feature_identifier} back to GeoDataFrame 'id' column or index.")
+            # Retrieve the full feature data using the direct row index
+            feature_series = features_gdf.loc[nearest_row_index]
+            feature_data_dict = feature_series.to_dict()
 
+            # Clean up for serialization: remove actual geometry, convert types
+            if feature_data_dict:
+                if 'geometry' in feature_data_dict and hasattr(feature_data_dict['geometry'], 'wkt'):
+                    try:
+                        feature_data_dict['geometry_wkt'] = feature_data_dict['geometry'].wkt
+                    except Exception:
+                        pass # Ignore if WKT conversion fails
+                    del feature_data_dict['geometry']
+                
+                # Convert other non-serializable types
+                for key, value in feature_data_dict.items():
+                    if isinstance(value, pd.Timestamp):
+                        feature_data_dict[key] = value.isoformat()
+                    elif isinstance(value, np.generic):
+                        feature_data_dict[key] = value.item()
+                    # Add other type conversions if necessary
+            
+        except KeyError: # Should not happen if nearest_row_index is in features_gdf.index
+            logger.error(f"Error retrieving feature data for row_index {nearest_row_index}: Index not found, though it should exist.")
+            return None, float('inf') # Treat as if feature couldn't be fully processed
         except Exception as e:
-             logger.error(f"Error retrieving feature data for identifier {feature_identifier}: {e}")
+            logger.error(f"Unexpected error retrieving or processing feature data for row_index {nearest_row_index}: {e}", exc_info=True)
+            # Depending on policy, could return partial data or None. Returning None for now.
+            return None, float('inf')
+    else:
+        # This case should ideally not be reached if all_distances_info is not empty
+        # and calculate_distances_to_features correctly provides row_index.
+        logger.warning(f"Nearest feature info from calculate_distances_to_features did not yield a usable row_index: {nearest_feature_info}")
+        return None, float('inf')
 
-    # Use standard dict to avoid serialization issues with geometry
-    # Convert geometry to WKT or remove if present
-    if feature_data:
-        if 'geometry' in feature_data and hasattr(feature_data['geometry'], 'wkt'):
-            try:
-                # Store WKT representation instead of Shapely object for JSON compatibility
-                feature_data['geometry_wkt'] = feature_data['geometry'].wkt 
-            except Exception:
-                 pass # Ignore if conversion fails
-            del feature_data['geometry']
-        # Convert any other non-serializable types if necessary (e.g., timestamps)
-        for key, value in feature_data.items():
-             if isinstance(value, pd.Timestamp):
-                 feature_data[key] = value.isoformat()
-             elif isinstance(value, np.generic):
-                 feature_data[key] = value.item() # Convert numpy types to native Python types
-
-    return feature_data, nearest.get('distance', float('inf'))
+    return feature_data_dict, distance
 
 def find_nearest_feature_db(point: Point, conn, table_name: str, geom_col: str, 
                               feature_id_col: str = 'id', attrs_to_select: Optional[List[str]] = None) -> Tuple[Optional[Dict], float]:
@@ -440,17 +446,23 @@ def get_elevation_at_point(point: Point, dem_path: str) -> Optional[float]:
     try:
         with rasterio.open(dem_path) as src:
             # Ensure point is in the same CRS as the raster
-            # Assuming point is WGS84 (EPSG:4326) and DEM might be different
+            # Assuming point is WGS84 (EPSG:4326) for input.
             point_coords = [(point.longitude, point.latitude)]
             
             # Sample the raster at the given coordinates
             # Note: rasterio.sample expects coordinates in the raster's CRS.
-            # If the DEM is not EPSG:4326, we need to transform the point coords.
-            # For simplicity here, we assume the DEM is EPSG:4326 or compatible.
-            # A robust implementation would check src.crs and transform if needed.
-            if src.crs and str(src.crs).lower() != 'epsg:4326': # Check if src.crs is not None
-                logger.warning(f"DEM CRS ({src.crs}) is not EPSG:4326. Elevation sampling might be inaccurate without coordinate transformation.")
-                # Add coordinate transformation logic here if necessary
+            # The GMTED tiles used in this project are expected to be in EPSG:4326 (WGS84).
+            # If a DEM with a different CRS were used, transformation of point_coords would be needed here.
+            if src.crs:
+                dem_crs_str = str(src.crs).lower()
+                if dem_crs_str != 'epsg:4326' and dem_crs_str != 'epsg:4269': # EPSG:4269 (NAD83) is sometimes used and very close to WGS84 for N.America
+                    logger.warning(
+                        f"DEM CRS ({src.crs}) is not EPSG:4326 or EPSG:4269. "
+                        f"Elevation sampling for point {point} from DEM {dem_path} might be inaccurate "
+                        f"without explicit coordinate transformation to DEM CRS before sampling."
+                    )
+            else:
+                logger.warning(f"DEM {dem_path} has no CRS defined. Assuming it is compatible with input point coordinates (EPSG:4326). Elevation sampling may be inaccurate.")
             
             # Use sample method to get value(s)
             # It returns a generator, get the first value
@@ -542,7 +554,8 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
             pixel_size_x = src.res[0]
             pixel_size_y = src.res[1]
             if src.crs and src.crs.is_geographic: # Check if src.crs is not None
-                # Approximation: degrees per meter varies with latitude
+                # Approximation: degrees per meter varies with latitude.
+                # This approximation becomes less accurate for very large radii or points near the Earth's poles.
                 m_per_deg_lat = 111132.954 - 559.822 * math.cos(2 * math.radians(point.latitude)) + 1.175 * math.cos(4 * math.radians(point.latitude))
                 m_per_deg_lon = 111320 * math.cos(math.radians(point.latitude))
                 radius_deg_x = radius_m / m_per_deg_lon
@@ -614,7 +627,13 @@ def calculate_landscape_metrics(point: Point, dem_path: str, radius_m: float = 1
 
 def determine_geomorphological_context(point: Point, dem_path: str) -> Dict[str, str]:
     """
-    Determine a simplified geomorphological context of a point using DEM.
+    Determine a simplified geomorphological context of a point using local DEM characteristics.
+
+    This function provides a basic classification based on elevation variation (standard deviation)
+    and terrain ruggedness (TRI) within a small radius (100m) around the point. 
+    It is intended as a high-level heuristic and does not perform complex geomorphometric analysis
+    (e.g., detailed slope, aspect, curvature analysis).
+    
     Requires rasterio.
     
     Args:
@@ -809,3 +828,62 @@ def find_nearest_water(point: Point, rivers_gdf: gpd.GeoDataFrame, lakes_gdf: gp
             best_type = 'lake'
     
     return best_distance, best_name, best_type
+
+def find_nearest_feature_with_name(point: Point, features_gdf: gpd.GeoDataFrame, name_field: str) -> Tuple[Optional[Dict], float]:
+    """
+    Find the nearest feature to a point that has a non-null name.
+    
+    Args:
+        point: Point to find the nearest feature to
+        features_gdf: GeoDataFrame with features
+        name_field: Name of the field containing the feature name
+        
+    Returns:
+        Tuple of (feature_data, distance) for closest feature with non-null name
+    """
+    if features_gdf.empty:
+        return None, float('inf')
+    
+    # Calculate distances to all features
+    distances = calculate_distances_to_features(point, features_gdf)
+    if not distances:
+        return None, float('inf')
+    
+    # Sort by distance and find first one with non-null name
+    for distance_result in distances:
+        feature_identifier = distance_result.get('feature_id')
+        if feature_identifier is None:
+            continue
+            
+        # Get the actual feature data
+        try:
+            if 'id' in features_gdf.columns and feature_identifier in features_gdf['id'].values:
+                feature_row = features_gdf[features_gdf['id'] == feature_identifier].iloc[0]
+            elif isinstance(feature_identifier, int) and feature_identifier in features_gdf.index:
+                feature_row = features_gdf.loc[feature_identifier]
+            elif 'row_index' in distance_result and distance_result['row_index'] in features_gdf.index:
+                feature_row = features_gdf.loc[distance_result['row_index']]
+            else:
+                continue
+                
+            # Check if this feature has a non-null name
+            feature_name = getattr(feature_row, name_field, None)
+            if feature_name is not None and str(feature_name).strip() and str(feature_name).lower() != 'none':
+                # Convert to dict for return
+                feature_data = feature_row.to_dict()
+                # Clean up geometry for serialization
+                if 'geometry' in feature_data and hasattr(feature_data['geometry'], 'wkt'):
+                    try:
+                        feature_data['geometry_wkt'] = feature_data['geometry'].wkt 
+                    except Exception:
+                        pass
+                    del feature_data['geometry']
+                    
+                return feature_data, distance_result['distance']
+                
+        except Exception as e:
+            logger.debug(f"Error checking feature {feature_identifier}: {e}")
+            continue
+    
+    # No feature found with a valid name
+    return None, float('inf')

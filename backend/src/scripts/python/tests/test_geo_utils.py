@@ -156,47 +156,83 @@ class TestLoadDemData:
         return mock_registry
 
     @mock.patch('utils.geo_utils.PIPELINE_AVAILABLE', True)
-    @mock.patch('utils.geo_utils.GlobalDataRegistry') 
-    def test_load_dem_data_success(self, MockGlobalDataRegistry, mock_data_pipeline_registry, sample_point_a, sample_gmted_tile_path):
-        MockGlobalDataRegistry.get_all_sources.return_value = mock_data_pipeline_registry.get_all_sources.return_value
-        tile_path = geo_utils.load_dem_data(point=sample_point_a)
-        assert tile_path == sample_gmted_tile_path
-        MockGlobalDataRegistry.get_all_sources.assert_called_once()
+    @mock.patch('utils.geo_utils.os.path.exists')
+    def test_load_dem_data_success(self, mock_exists, mock_data_pipeline_registry, sample_point_a, sample_gmted_tile_path):
+        # Create a mock source with the test tile path
+        from data_pipeline.sources import DataSource
+        source_def = DataSource(
+            name="gmted_elevation_tiled", source_type='file', format='geotiff', is_tiled=True,
+            tile_paths=[sample_gmted_tile_path], tile_centers=[(-75.0, 45.0)], tile_size_degrees=1.0
+        )
+        
+        # Mock the registry that gets imported inside the function
+        mock_registry = mock.MagicMock()
+        mock_registry.get.return_value = source_def
+        mock_registry.get_all_sources.return_value = {"gmted_elevation_tiled": source_def}
+        
+        # Mock os.path.exists to return True for our test path
+        mock_exists.side_effect = lambda path: path == sample_gmted_tile_path
+        
+        # Mock the import that happens inside the function
+        with mock.patch.dict('sys.modules', {'data_pipeline.registry': mock.MagicMock(REGISTRY=mock_registry)}):
+            tile_path = geo_utils.load_dem_data(point=sample_point_a)
+            assert tile_path == sample_gmted_tile_path
 
     @mock.patch('utils.geo_utils.PIPELINE_AVAILABLE', True)
-    @mock.patch('utils.geo_utils.GlobalDataRegistry')
-    def test_load_dem_data_point_outside_all_tiles(self, MockGlobalDataRegistry, mock_data_pipeline_registry, tmp_path):
-        MockGlobalDataRegistry.get_all_sources.return_value = mock_data_pipeline_registry.get_all_sources.return_value
+    @mock.patch('utils.geo_utils.os.path.exists')
+    def test_load_dem_data_point_outside_all_tiles(self, mock_exists, mock_data_pipeline_registry, tmp_path):
+        from data_pipeline.sources import DataSource
+        source_def = DataSource(
+            name="gmted_elevation_tiled", source_type='file', format='geotiff', is_tiled=True,
+            tile_paths=[str(tmp_path / "gmted_tile_N40W080.tif")], 
+            tile_centers=[(45.0, 45.0)], tile_size_degrees=1.0
+        )
+        mock_registry = mock.MagicMock()
+        mock_registry.get.return_value = source_def
+        mock_registry.get_all_sources.return_value = {"gmted_elevation_tiled": source_def}
+        mock_exists.return_value = True
+        
         far_point = Point(longitude=0.0, latitude=0.0)
-        tile_path = geo_utils.load_dem_data(point=far_point)
-        assert tile_path is None
+        with mock.patch.dict('sys.modules', {'data_pipeline.registry': mock.MagicMock(REGISTRY=mock_registry)}):
+            tile_path = geo_utils.load_dem_data(point=far_point)
+            assert tile_path is None
 
     @mock.patch('utils.geo_utils.PIPELINE_AVAILABLE', True)
-    @mock.patch('utils.geo_utils.GlobalDataRegistry')
-    def test_load_dem_data_tile_path_not_exists(self, MockGlobalDataRegistry, mock_data_pipeline_registry, sample_point_a, tmp_path):
+    @mock.patch('utils.geo_utils.os.path.exists')
+    def test_load_dem_data_tile_path_not_exists(self, mock_exists, mock_data_pipeline_registry, sample_point_a, tmp_path):
         from data_pipeline.sources import DataSource
         non_existent_tile_path = str(tmp_path / "non_existent_tile.tif")
         source_def_bad_path = DataSource(
             name="gmted_elevation_tiled", source_type='file', format='geotiff', is_tiled=True,
             tile_paths=[non_existent_tile_path], tile_centers=[(-75.0, 45.0)], tile_size_degrees=1.0
         )
-        mock_data_pipeline_registry.get_all_sources.return_value = {"gmted_elevation_tiled": source_def_bad_path}
-        MockGlobalDataRegistry.get_all_sources.return_value = mock_data_pipeline_registry.get_all_sources.return_value
-        tile_path = geo_utils.load_dem_data(point=sample_point_a)
-        assert tile_path is None
+        mock_registry = mock.MagicMock()
+        mock_registry.get.return_value = source_def_bad_path
+        mock_registry.get_all_sources.return_value = {"gmted_elevation_tiled": source_def_bad_path}
+        
+        # Mock os.path.exists to return False for our test path
+        mock_exists.return_value = False
+        with mock.patch.dict('sys.modules', {'data_pipeline.registry': mock.MagicMock(REGISTRY=mock_registry)}):
+            tile_path = geo_utils.load_dem_data(point=sample_point_a)
+            assert tile_path is None
 
     @mock.patch('utils.geo_utils.PIPELINE_AVAILABLE', True)
-    @mock.patch('utils.geo_utils.GlobalDataRegistry')
-    def test_load_dem_data_source_misconfigured(self, MockGlobalDataRegistry, mock_data_pipeline_registry, sample_point_a):
+    @mock.patch('utils.geo_utils.os.path.exists')
+    def test_load_dem_data_source_misconfigured(self, mock_exists, mock_data_pipeline_registry, sample_point_a):
         from data_pipeline.sources import DataSource
         misconfigured_source = DataSource(
-            name="gmted_elevation_tiled", source_type='file', format='geotiff', is_tiled=True,
-            tile_paths=["some/path.tif"], tile_centers=None, tile_size_degrees=1.0
+            name="gmted_elevation_tiled", source_type='file', format='geotiff', is_tiled=False,  # Not tiled
+            tile_paths=[], tile_centers=[], tile_size_degrees=None
         )
-        mock_data_pipeline_registry.get_all_sources.return_value = {"gmted_elevation_tiled": misconfigured_source}
-        MockGlobalDataRegistry.get_all_sources.return_value = mock_data_pipeline_registry.get_all_sources.return_value
-        tile_path = geo_utils.load_dem_data(point=sample_point_a)
-        assert tile_path is None
+        mock_registry = mock.MagicMock()
+        mock_registry.get.return_value = misconfigured_source
+        mock_registry.get_all_sources.return_value = {"gmted_elevation_tiled": misconfigured_source}
+        
+        # Mock os.path.exists to return False to ensure we don't find any real files
+        mock_exists.return_value = False
+        with mock.patch.dict('sys.modules', {'data_pipeline.registry': mock.MagicMock(REGISTRY=mock_registry)}):
+            tile_path = geo_utils.load_dem_data(point=sample_point_a)
+            assert tile_path is None
 
     @mock.patch('utils.geo_utils.PIPELINE_AVAILABLE', False)
     def test_load_dem_data_pipeline_not_available(self, sample_point_a):

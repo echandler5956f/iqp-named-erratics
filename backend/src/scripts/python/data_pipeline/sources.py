@@ -37,6 +37,9 @@ class DataSource:
     # Optional list of processing step identifiers or descriptions
     processing_steps: Optional[List[str]] = field(default_factory=list)
 
+    # Optional list of columns to keep in the main cache (memory optimization)
+    default_keep_cols: Optional[List[str]] = None
+
     def __post_init__(self):
         if not self.name:
             raise ValueError("DataSource name cannot be empty.")
@@ -99,3 +102,35 @@ class DataSource:
 
     def __repr__(self):
         return f"DataSource(name='{self.name}', type='{self.source_type}', format='{self.format}', is_tiled={self.is_tiled})" 
+
+    # ------------------------------------------------------------------
+    # Helper utilities
+    # ------------------------------------------------------------------
+    def tile_id_for_point(self, lon: float, lat: float) -> Optional[int]:
+        """Return index of tile covering (*lon*, *lat*) if this is a tiled DataSource.
+
+        The method performs a simple bounds check based on *tile_centers* and
+        *tile_size_degrees*.  It returns **None** when the DataSource is not
+        tiled or when the point falls outside the declared tiles.
+        """
+        if not self.is_tiled or not self.tile_centers or not self.tile_size_degrees:
+            return None
+        half = self.tile_size_degrees / 2.0
+        for idx, (clon, clat) in enumerate(self.tile_centers):
+            if clon is None or clat is None:
+                continue
+            if abs(lon - clon) <= half and abs(lat - clat) <= half:
+                return idx
+        return None
+
+    def url_or_path_for_tile(self, tile_index: int) -> Optional[str]:
+        """Return URL/path for *tile_index* respecting source_type."""
+        if not self.is_tiled:
+            return None
+        if self.source_type in {'http', 'https', 'ftp'}:
+            if 0 <= tile_index < len(self.tile_urls):
+                return self.tile_urls[tile_index]
+        else:  # 'file' or 'manual'
+            if 0 <= tile_index < len(self.tile_paths):
+                return self.tile_paths[tile_index]
+        return None 

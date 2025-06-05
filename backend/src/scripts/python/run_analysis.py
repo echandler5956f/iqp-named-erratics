@@ -24,6 +24,57 @@ PYTHON_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if PYTHON_SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, PYTHON_SCRIPTS_DIR)
 
+def _execute_analysis_script(
+    script_name: str,
+    script_args: List[str],
+    log_action_description: str,
+) -> bool:
+    """
+    Helper to construct and run an analysis script as a subprocess.
+
+    Args:
+        script_name: The filename of the Python script to run (e.g., 'proximity_analysis.py').
+        script_args: A list of string arguments to pass to the script.
+        log_action_description: A human-readable description of the action for logging.
+
+    Returns:
+        True if the script ran successfully, False otherwise.
+    """
+    full_script_path = os.path.join(SCRIPT_DIR, script_name)
+    # Ensure all script_args are strings
+    cmd: List[str] = [sys.executable, full_script_path] + [str(arg) for arg in script_args]
+
+    logger.info("Executing: %s", log_action_description)
+    logger.debug("Full command: %s", ' '.join(cmd))
+
+    try:
+        # Scripts are expected to print JSON to stdout for the Node.js service.
+        # Thus, capture_output should be False or handled carefully if True.
+        # check=True will raise CalledProcessError on non-zero exit codes.
+        # text=True decodes stdout/stderr as text.
+        process = subprocess.run(cmd, check=True, text=True, capture_output=False)
+        logger.info("%s completed successfully.", log_action_description)
+        return True
+    except subprocess.CalledProcessError as exc:
+        logger.error(
+            "%s failed. Subprocess returned non-zero exit status %d.",
+            log_action_description, exc.returncode
+        )
+        # Stderr and stdout are not captured if capture_output=False,
+        # but the called script's output will go to the parent's stderr/stdout.
+        # If capture_output were True:
+        # if exc.stderr:
+        #     logger.error("Script stderr:\\n%s", exc.stderr.strip())
+        # if exc.stdout:
+        #     logger.error("Script stdout (on error):\\n%s", exc.stdout.strip())
+        return False
+    except FileNotFoundError:
+        logger.error("Failed to run %s: Script not found at %s.", log_action_description, full_script_path)
+        return False
+    except Exception as e: # Catch any other potential errors during subprocess setup/execution
+        logger.error("An unexpected error occurred while trying to run %s: %s", log_action_description, e, exc_info=True)
+        return False
+
 def get_results_directory() -> str:
     """Get the default results directory path and ensure it exists.
     
@@ -52,29 +103,20 @@ def run_proximity_analysis(
     verbose: bool = False,
 ):
     """Wrapper around proximity_analysis.py respecting its current CLI."""
-    script_path = os.path.join(SCRIPT_DIR, 'proximity_analysis.py')
-
-    cmd: List[str] = [sys.executable, script_path, str(erratic_id)]
+    script_args: List[str] = [str(erratic_id)]
 
     if update_db:
-        cmd.append('--update-db')
-
+        script_args.append('--update-db')
     if output_file:
-        cmd.extend(['--output', output_file])
-
+        script_args.extend(['--output', output_file])
     if verbose:
-        cmd.append('--verbose')
-
-    logger.info("Running proximity analysis for erratic %s", erratic_id)
-    logger.debug("Command: %s", ' '.join(cmd))
-
-    try:
-        subprocess.run(cmd, check=True)
-        logger.info("Proximity analysis for erratic %s completed successfully", erratic_id)
-        return True
-    except subprocess.CalledProcessError as exc:
-        logger.error("Proximity analysis failed: %s", exc)
-        return False
+        script_args.append('--verbose')
+    
+    return _execute_analysis_script(
+        script_name='proximity_analysis.py',
+        script_args=script_args,
+        log_action_description=f"Proximity analysis for erratic ID {erratic_id}"
+    )
 
 def run_classification(
     erratic_id: Optional[int] = None,
@@ -100,76 +142,81 @@ def run_classification(
     if erratic_id is None and not build_topics:
         raise ValueError("erratic_id is required unless build_topics is True")
 
-    script_path = os.path.join(SCRIPT_DIR, 'classify_erratic.py')
+    script_args: List[str] = [] # Using Any temporarily as elements can be int or str before conversion in helper
 
-    cmd: List[str] = [sys.executable, script_path]
-
-    # Positional arg (erratic_id) comes *after* flags; argparse is order-agnostic.
     if build_topics:
-        cmd.append('--build-topics')
-
-    if erratic_id is not None:
-        cmd.append(str(erratic_id))
-
+        script_args.append('--build-topics')
+    if erratic_id is not None: # erratic_id is positional, should come after flags if argparse handles it that way
+        script_args.append(erratic_id) # Script expects ID as positional arg
     if update_db:
-        cmd.append('--update-db')
-
+        script_args.append('--update-db')
     if output_file:
-        cmd.extend(['--output', output_file])
-
+        script_args.extend(['--output', output_file])
     if model_dir:
-        cmd.extend(['--model-dir', model_dir])
-
+        script_args.extend(['--model-dir', model_dir])
     if verbose:
-        cmd.append('--verbose')
+        script_args.append('--verbose')
 
-    human_readable_target = f"erratic {erratic_id}" if erratic_id is not None else "topic-model build"
-    logger.info("Running classification: %s", human_readable_target)
-    logger.debug("Command: %s", ' '.join(cmd))
+    human_readable_target = f"erratic ID {erratic_id}" if erratic_id is not None else "topic model build"
+    log_description = f"Classification task for {human_readable_target}"
+    
+    # classify_erratic.py might have specific argument order needs.
+    # The original code had: cmd = [sys.executable, script_path]
+    # then: if build_topics: cmd.append('--build-topics')
+    # then: if erratic_id is not None: cmd.append(str(erratic_id))
+    # This suggests flags first, then positional.
+    # The _execute_analysis_script helper adds sys.executable and script_path.
+    # We need to ensure script_args are passed in the correct order if the target script is sensitive.
+    # For classify_erratic.py: flags, then optional erratic_id.
 
-    try:
-        subprocess.run(cmd, check=True)
-        logger.info("Classification task finished successfully: %s", human_readable_target)
-        return True
-    except subprocess.CalledProcessError as exc:
-        logger.error("Classification task failed: %s", exc)
-        return False
+    final_script_args = []
+    if build_topics:
+        final_script_args.append('--build-topics')
+    # All other flags before positional erratic_id
+    if update_db:
+        final_script_args.append('--update-db')
+    if output_file:
+        final_script_args.extend(['--output', output_file])
+    if model_dir:
+        final_script_args.extend(['--model-dir', model_dir])
+    if verbose:
+        final_script_args.append('--verbose')
+    if erratic_id is not None:
+        final_script_args.append(str(erratic_id))
+
+    return _execute_analysis_script(
+        script_name='classify_erratic.py',
+        script_args=final_script_args,
+        log_action_description=log_description
+    )
 
 def run_clustering(algorithm: str, output_file: str, verbose: bool = False, 
                    k: Optional[int] = None, features: Optional[List[str]] = None, 
                    eps: Optional[float] = None, min_samples: Optional[int] = None, 
                    metric: Optional[str] = None, linkage: Optional[str] = None):
     """Run clustering analysis for all erratics using the specified algorithm and parameters."""
-    script_path = os.path.join(SCRIPT_DIR, 'clustering.py')
-    
-    cmd = [sys.executable, script_path, '--algorithm', algorithm, '--output', output_file]
+    script_args: List[str] = ['--algorithm', algorithm, '--output', output_file]
     
     if k is not None:
-        cmd.extend(['--k', str(k)])
+        script_args.extend(['--k', str(k)])
     if features:
-        cmd.extend(['--features'] + features)
+        script_args.extend(['--features'] + features)
     if eps is not None:
-        cmd.extend(['--eps', str(eps)])
+        script_args.extend(['--eps', str(eps)])
     if min_samples is not None:
-        cmd.extend(['--min_samples', str(min_samples)])
+        script_args.extend(['--min_samples', str(min_samples)])
     if metric:
-        cmd.extend(['--metric', metric])
+        script_args.extend(['--metric', metric])
     if linkage:
-        cmd.extend(['--linkage', linkage])
-    
+        script_args.extend(['--linkage', linkage])
     if verbose:
-        cmd.append('--verbose')
+        script_args.append('--verbose')
     
-    logger.info(f"Running clustering analysis ({algorithm}) for all erratics")
-    logger.debug(f"Command: {' '.join(cmd)}")
-    
-    try:
-        subprocess.run(cmd, check=True)
-        logger.info("Clustering analysis completed successfully")
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Clustering analysis failed: {e}")
-        return False
+    return _execute_analysis_script(
+        script_name='clustering.py',
+        script_args=script_args,
+        log_action_description=f"Clustering analysis ({algorithm}) for all erratics"
+    )
     
 
 def main():
@@ -178,49 +225,50 @@ def main():
     subparsers = parser.add_subparsers(dest='command', help='Analysis command to run')
     
     # Proximity analysis parser
-    proximity_parser = subparsers.add_parser('proximity', help='Run proximity analysis for an erratic')
-    proximity_parser.add_argument('erratic_id', type=int, help='ID of the erratic to analyze')
-    proximity_parser.add_argument('--update-db', action='store_true', help='Update database with results')
-    proximity_parser.add_argument('--output', type=str, help='Output file for results (JSON)')
-    proximity_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    proximity_parser = subparsers.add_parser('proximity', help='Run proximity analysis for a single specified erratic.')
+    proximity_parser.add_argument('erratic_id', type=int, help='ID of the erratic to analyze.')
+    proximity_parser.add_argument('--update-db', action='store_true', help='Update the database with analysis results.')
+    proximity_parser.add_argument('--output', type=str, help='Optional: Path to JSON file to save analysis results.')
+    proximity_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed console output.')
     
     # Classification parser
-    classify_parser = subparsers.add_parser('classify', help='Run classification for an erratic')
-    classify_parser.add_argument('erratic_id', type=int, nargs='?', help='ID of the erratic to classify (omit when --build-topics)')
-    classify_parser.add_argument('--build-topics', action='store_true', help='(Re)build topic model using all erratic descriptions')
-    classify_parser.add_argument('--update-db', action='store_true', help='Update database with results')
-    classify_parser.add_argument('--output', type=str, help='Output file for results (JSON)')
-    classify_parser.add_argument('--model-dir', type=str, help='Custom directory for classifier model files')
-    classify_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    classify_parser = subparsers.add_parser('classify', help='Run NLP classification for an erratic or build topic models.')
+    classify_parser.add_argument('erratic_id', type=int, nargs='?', help='ID of the erratic to classify. Omit this when using --build-topics.')
+    classify_parser.add_argument('--build-topics', action='store_true', help='(Re)build topic models using all erratic descriptions from the database.')
+    classify_parser.add_argument('--update-db', action='store_true', help='Update the database with classification results (applies if erratic_id is provided).')
+    classify_parser.add_argument('--output', type=str, help='Optional: Path to JSON file to save classification results or build log.')
+    classify_parser.add_argument('--model-dir', type=str, help='Optional: Custom directory for storing/loading classifier model files.')
+    classify_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed console output.')
     
     # Clustering parser
-    cluster_parser = subparsers.add_parser('cluster', help='Run clustering analysis for all erratics')
-    cluster_parser.add_argument('--algorithm', type=str, default='dbscan', choices=['dbscan', 'kmeans', 'hierarchical'], help='Clustering algorithm to use (default: dbscan)')
-    cluster_parser.add_argument('--output', type=str, required=True, help='Output file for results (JSON)')
+    cluster_parser = subparsers.add_parser('cluster', help='Run spatial clustering analysis for all erratics.')
+    cluster_parser.add_argument('--algorithm', type=str, default='dbscan', choices=['dbscan', 'kmeans', 'hierarchical'], help='Clustering algorithm to use (default: dbscan).')
+    cluster_parser.add_argument('--output', type=str, required=True, help='Path to JSON file to save clustering results.')
     # K-Means / Hierarchical args
-    cluster_parser.add_argument('--k', type=int, help='K-Means/Hierarchical: Number of clusters.')
-    cluster_parser.add_argument('--features', nargs='+', help='Features for clustering (e.g., longitude latitude, vector_embedding). Default varies by algorithm.')
-    cluster_parser.add_argument('--linkage', type=str, choices=['ward', 'complete', 'average', 'single'], help='Hierarchical: Linkage criterion (default: ward).')
+    cluster_parser.add_argument('--k', type=int, help='K-Means/Hierarchical: Number of clusters (K). Required for these algorithms.')
+    cluster_parser.add_argument('--features', nargs='+', help='Features for clustering (e.g., longitude latitude). Default varies by algorithm. Provide as space-separated list.')
+    cluster_parser.add_argument('--linkage', type=str, choices=['ward', 'complete', 'average', 'single'], default='ward', help='Hierarchical: Linkage criterion (default: ward).')
     # DBSCAN args
-    cluster_parser.add_argument('--eps', type=float, help='DBSCAN: Epsilon parameter. Auto-estimated if not provided.')
-    cluster_parser.add_argument('--min_samples', type=int, help='DBSCAN: Minimum number of samples (default: 3).')
-    cluster_parser.add_argument('--metric', type=str, choices=['auto', 'haversine', 'euclidean', 'cosine'], help='DBSCAN: Distance metric (default: auto).')
-    cluster_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    cluster_parser.add_argument('--eps', type=float, help='DBSCAN: Epsilon parameter (search radius). Auto-estimated if not provided.')
+    cluster_parser.add_argument('--min_samples', type=int, default=3, help='DBSCAN: Minimum number of samples in a neighborhood for a point to be considered as a core point (default: 3).')
+    cluster_parser.add_argument('--metric', type=str, default='haversine', choices=['auto', 'haversine', 'euclidean', 'cosine'], help='DBSCAN/Clustering: Distance metric to use (default: haversine for geo-data). \'auto\' lets the algorithm decide.')
+    cluster_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed console output.')
     
     # Pipeline parser
-    pipeline_parser = subparsers.add_parser('pipeline', help='Run full analysis pipeline')
-    pipeline_parser.add_argument('--cluster-algorithm', type=str, default='dbscan', choices=['dbscan', 'kmeans', 'hierarchical'], help='Clustering algorithm for pipeline step (default: dbscan)')
-    pipeline_parser.add_argument('--cluster-output', type=str, help='Output file for clustering results (default: data/results/pipeline_cluster_results.json)')
-    pipeline_parser.add_argument('--classify-each', action='store_true', help='Run classification for every erratic')
-    pipeline_parser.add_argument('--proximity-each', action='store_true', help='Run proximity analysis for every erratic')
-    pipeline_parser.add_argument('--update-db', action='store_true', help='Update DB during per-erratic steps')
-    pipeline_parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
-    # Pass-through clustering params
-    pipeline_parser.add_argument('--k', type=int, help='K for KMeans/Hierarchical when pipeline clustering uses those algorithms')
-    pipeline_parser.add_argument('--eps', type=float, help='Epsilon for DBSCAN when pipeline clustering uses DBSCAN')
-    pipeline_parser.add_argument('--min-samples', type=int, dest='min_samples', help='min_samples for DBSCAN when used in pipeline')
-    pipeline_parser.add_argument('--metric', type=str, choices=['auto', 'haversine', 'euclidean', 'cosine'], help='Distance metric for DBSCAN or clustering metric where applicable')
-    pipeline_parser.add_argument('--linkage', type=str, choices=['ward', 'complete', 'average', 'single'], help='Linkage for Hierarchical clustering')
+    pipeline_parser = subparsers.add_parser('pipeline', help='Run the full multi-step analysis pipeline (topic modeling, clustering, and optional per-erratic analyses).')
+    pipeline_parser.add_argument('--cluster-algorithm', type=str, default='dbscan', choices=['dbscan', 'kmeans', 'hierarchical'], help='Pipeline Step: Clustering algorithm (default: dbscan).')
+    pipeline_parser.add_argument('--cluster-output', type=str, help='Pipeline Step: Output JSON file for clustering results (default: data/results/pipeline_cluster_results.json).')
+    pipeline_parser.add_argument('--classify-each', action='store_true', help='Pipeline Step: Run classification for every erratic in the database.')
+    pipeline_parser.add_argument('--proximity-each', action='store_true', help='Pipeline Step: Run proximity analysis for every erratic in the database.')
+    pipeline_parser.add_argument('--update-db', action='store_true', help='Pipeline Step: Update database during per-erratic classification/proximity steps.')
+    pipeline_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed console output for all pipeline steps.')
+    # Pass-through clustering params for pipeline
+    pipeline_parser.add_argument('--k', type=int, help='Pipeline Clustering: K for KMeans/Hierarchical.')
+    pipeline_parser.add_argument('--eps', type=float, help='Pipeline Clustering: Epsilon for DBSCAN.')
+    pipeline_parser.add_argument('--min-samples', type=int, dest='min_samples_pipeline', help='Pipeline Clustering: min_samples for DBSCAN (use min_samples_pipeline to avoid conflict with top-level cluster command).')
+    pipeline_parser.add_argument('--metric', type=str, choices=['auto', 'haversine', 'euclidean', 'cosine'], dest='metric_pipeline', help='Pipeline Clustering: Distance metric for DBSCAN or applicable algorithms (use metric_pipeline to avoid conflict).')
+    pipeline_parser.add_argument('--linkage', type=str, choices=['ward', 'complete', 'average', 'single'], dest='linkage_pipeline', help='Pipeline Clustering: Linkage for Hierarchical clustering (use linkage_pipeline to avoid conflict).')
+    pipeline_parser.add_argument('--max-workers', type=int, help='Pipeline Parallelism: Maximum parallel workers for per-erratic steps (default: 2xCPU count, capped at 32).')
     
     # Parse arguments
     args = parser.parse_args()
@@ -261,12 +309,14 @@ def main():
     elif args.command == 'pipeline' or args.command is None:
         # Gather clustering kwargs sans None values
         cluster_kwargs = {k: v for k, v in {
-            'k': getattr(args, 'k', None),
-            'eps': getattr(args, 'eps', None),
-            'min_samples': getattr(args, 'min_samples', None),
-            'metric': getattr(args, 'metric', None),
-            'linkage': getattr(args, 'linkage', None),
+            'k': getattr(args, 'k', None), # Will take pipeline --k if specified, else None
+            'eps': getattr(args, 'eps', None), # Will take pipeline --eps if specified, else None
+            'min_samples': getattr(args, 'min_samples_pipeline', None), # Use the renamed pipeline arg
+            'metric': getattr(args, 'metric_pipeline', None),          # Corrected: Use the renamed pipeline arg
+            'linkage': getattr(args, 'linkage_pipeline', None),        # Corrected: Use the renamed pipeline arg
         }.items() if v is not None}
+
+        max_workers_override = getattr(args, 'max_workers', None)
 
         success = run_full_pipeline(
             cluster_algorithm=getattr(args, 'cluster_algorithm', 'dbscan'),
@@ -275,6 +325,7 @@ def main():
             proximity_each=getattr(args, 'proximity_each', False),
             update_db=getattr(args, 'update_db', False),
             verbose=getattr(args, 'verbose', False),
+            max_workers=max_workers_override,
             **cluster_kwargs,
         )
     else:
@@ -295,6 +346,7 @@ def run_full_pipeline(
     proximity_each: bool = False,
     update_db: bool = False,
     verbose: bool = False,
+    max_workers: Optional[int] = None,
     **cluster_kwargs,
 ) -> bool:
     """Execute the full analysis pipeline.
@@ -312,6 +364,7 @@ def run_full_pipeline(
         proximity_each: If True run proximity analysis for every erratic.
         update_db: Pass --update-db when running per-erratic steps.
         verbose: Propagate verbose flag to underlying scripts.
+        max_workers: Maximum parallel workers for per-erratic steps.
         **cluster_kwargs: Extra kwargs forwarded to run_clustering (e.g. eps, k, etc.).
     """
     if verbose:
@@ -320,6 +373,16 @@ def run_full_pipeline(
     # Set default output path if not provided
     if cluster_output is None:
         cluster_output = get_default_output_path('pipeline_cluster_results.json')
+
+    # Prefetch all data sources before parallel processing
+    if proximity_each and max_workers and max_workers > 1:
+        logger.info("=== PREFETCHING DATA SOURCES ===")
+        try:
+            from data_pipeline import prefetch_all
+            prefetch_all()
+            logger.info("Data sources prefetched successfully")
+        except Exception as e:
+            logger.warning(f"Failed to prefetch data sources: {e}. Continuing anyway...")
 
     logger.info("=== PIPELINE STEP 1: Building topic model ===")
     if not run_classification(build_topics=True, verbose=verbose):
@@ -344,19 +407,51 @@ def run_full_pipeline(
             logger.error("Failed to load erratic IDs from DB: %s", exc, exc_info=True)
             return False
 
-    # Per-erratic classification
-    if classify_each:
-        logger.info("=== PIPELINE STEP 3: Classifying each erratic (%d total) ===", len(erratic_ids))
-        for eid in erratic_ids:
-            if not run_classification(erratic_id=eid, update_db=update_db, verbose=verbose):
-                logger.warning("Classification failed for erratic %s; continuing.", eid)
+    # Determine worker pool size once.
+    if max_workers is None or max_workers <= 0:
+        import multiprocessing
+        max_workers = min(32, (multiprocessing.cpu_count() or 1) * 2)
 
-    # Per-erratic proximity analysis
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _parallel_run(func, ids, label):
+        if not ids:
+            return
+        # For memory-heavy proximity jobs, clamp workers. This value (10) is an empirical balance.
+        # Original thought was 4, but 10 seems to be the current value from a previous observation.
+        # This helps prevent OOM errors when many proximity analyses run concurrently.
+        workers = max_workers if label != "Proximity analysis" else min(max_workers, 10)
+        logger.info("=== PIPELINE STEP: %s (%d tasks, %d workers) ===", label, len(ids), workers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(func, eid): eid for eid in ids}
+            for fut in as_completed(futures):
+                eid = futures[fut]
+                try:
+                    ok = fut.result()
+                    if not ok:
+                        logger.warning("%s failed for erratic %s", label, eid)
+                except Exception as exc:
+                    logger.error("%s raised for erratic %s: %s", label, eid, exc)
+
+    if classify_each:
+        _parallel_run(lambda eid: run_classification(erratic_id=eid, update_db=update_db, verbose=verbose), erratic_ids, "Classification")
+
     if proximity_each:
-        logger.info("=== PIPELINE STEP 4: Proximity analysis for each erratic (%d total) ===", len(erratic_ids))
-        for eid in erratic_ids:
-            if not run_proximity_analysis(erratic_id=eid, update_db=update_db, verbose=verbose):
-                logger.warning("Proximity analysis failed for erratic %s; continuing.", eid)
+        # Use in-process calculation when single worker to avoid heavy subprocess overhead
+        # and to make debugging/profiling of a single proximity run easier if needed.
+        if max_workers == 1:
+            from proximity_analysis import calculate_proximity  # noqa: WPS433
+
+            def _prox(eid):
+                res = calculate_proximity(eid)
+                if update_db and 'proximity_analysis' in res:
+                    from utils import db_utils  # local import to avoid early heavy deps
+                    db_utils.update_erratic_analysis_results(eid, res['proximity_analysis'])
+                return 'error' not in res
+
+            _parallel_run(_prox, erratic_ids, "Proximity analysis")
+        else:
+            _parallel_run(lambda eid: run_proximity_analysis(erratic_id=eid, update_db=update_db, verbose=verbose), erratic_ids, "Proximity analysis")
 
     logger.info("=== PIPELINE COMPLETE ===")
     return True

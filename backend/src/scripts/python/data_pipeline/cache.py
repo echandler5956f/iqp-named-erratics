@@ -182,4 +182,50 @@ class CacheManager:
                 os.remove(file)
             for file in Path(self.cache_dir).glob("*.geom_col"):
                 os.remove(file)
-            logger.info("Cleared all caches") 
+            logger.info("Cleared all caches")
+
+    # ------------------------------------------------------------------
+    # Cache housekeeping utilities
+    # ------------------------------------------------------------------
+    def trim(self, max_size_gb: float = 10.0):
+        """Remove least-recently-used cache entries until under *max_size_gb*.
+
+        The method walks the cache directory, calculates total disk usage, and
+        deletes the oldest files (by access time) – including their `.crs` and
+        `.geom_col` companions – until the directory's size is below the
+        specified threshold.
+        """
+        if max_size_gb <= 0:
+            return  # nothing to do
+
+        max_bytes = max_size_gb * 1024 ** 3
+        files = list(Path(self.cache_dir).glob("*.feather"))
+        if not files:
+            return
+
+        # Sort by atime (oldest first)
+        files.sort(key=lambda p: p.stat().st_atime)
+
+        def _associated(f: Path):
+            for ext in (".crs", ".geom_col"):
+                side = f.with_suffix(f.suffix + ext)
+                if side.exists():
+                    yield side
+
+        total = sum(f.stat().st_size for f in files)
+        if total <= max_bytes:
+            return
+
+        logger.warning("Cache exceeds %.2f GB (%.2f GB). Trimming…", max_size_gb, total / 1024 ** 3)
+        for feather_file in files:
+            size = feather_file.stat().st_size
+            try:
+                feather_file.unlink()
+                for side in _associated(feather_file):
+                    side.unlink(missing_ok=True)  # Python 3.8+
+            except Exception as err:
+                logger.error("Failed to delete cache file %s: %s", feather_file, err)
+                continue
+            total -= size
+            if total <= max_bytes:
+                break 

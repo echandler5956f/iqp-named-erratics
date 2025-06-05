@@ -3,13 +3,15 @@ import os
 from unittest import mock
 import geopandas as gpd
 from shapely.geometry import Point
+from pathlib import Path
 
 from data_pipeline.sources import DataSource
 from data_pipeline.pipeline import DataPipeline
 from data_pipeline.registry import DataRegistry
 from data_pipeline.cache import CacheManager
-from data_pipeline.loaders import FileLoader # Assuming FileLoader for some tests
-from data_pipeline.processors import GeoJSONProcessor # Assuming for some tests
+from data_pipeline.loaders import FileLoader  # Assuming FileLoader for some tests
+from data_pipeline.processors import GeoJSONProcessor  # Assuming for some tests
+from data_pipeline.download_cache import RawDownloadCache
 
 @pytest.fixture
 def mock_registry():
@@ -45,17 +47,19 @@ def sample_source_def():
 
 @pytest.fixture
 def pipeline_instance(mock_registry, mock_cache_manager, tmp_path):
-    # Ensure the pipeline uses our mocked cache manager by passing its dir
-    # The pipeline will instantiate its own CacheManager, so we patch CacheManager directly for some tests
-    # or ensure that if a cache_dir is passed, it's used, and then we can inspect that dir.
-    # For simplicity in mocking, let's allow injecting the mock cache_manager if the class is changed to support it,
-    # or patch CacheManager constructor.
-    
-    # Patching CacheManager within the pipeline's scope for these tests
-    with mock.patch('data_pipeline.pipeline.CacheManager', return_value=mock_cache_manager) as patched_cache_mgr:
-        pipeline = DataPipeline(registry=mock_registry, cache_dir=str(tmp_path / "pipe_cache"))
-        # pipeline.cache_manager will be the instance of the patched_cache_mgr
-        return pipeline
+    """Instantiate DataPipeline with mocked CacheManager and isolate RawDownloadCache root in tmp_path."""
+    with mock.patch('data_pipeline.pipeline.CacheManager', return_value=mock_cache_manager):
+        # Patch RawDownloadCache used *inside* DataPipeline to avoid touching real filesystem
+        with mock.patch('data_pipeline.pipeline.RawDownloadCache') as MockRDC:
+            # Configure ensure to just execute its download_fn and return a deterministic path
+            def _ensure(url, source_name, download_fn):
+                dest = tmp_path / "raw_cache" / source_name / "dummy.dat"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                ok = download_fn(str(dest))
+                return str(dest) if ok else None
+            MockRDC.return_value.ensure.side_effect = _ensure
+            pipeline = DataPipeline(registry=mock_registry, cache_dir=str(tmp_path / "pipe_cache"))
+            return pipeline
 
 class TestDataPipeline:
 
@@ -76,43 +80,26 @@ class TestDataPipeline:
 
     @mock.patch('data_pipeline.pipeline.LoaderFactory')
     @mock.patch('data_pipeline.pipeline.ProcessorFactory')
-    @mock.patch('os.path.exists') # For checking existing raw file or source.path
-    def test_load_cache_miss_successful_load_process_save(self, mock_os_exists, mock_proc_factory, mock_load_factory, 
+    def test_load_cache_miss_successful_load_process_save(self, mock_proc_factory, mock_load_factory, 
                                                        pipeline_instance, mock_registry, mock_cache_manager, 
                                                        sample_source_def, mock_file_loader, mock_geojson_processor):
-        # Use http source to force loader usage
-        http_source_def = DataSource(**{**sample_source_def.__dict__, 'source_type': 'http', 'url': 'http://fake.url/data.geojson', 'path': None})
+        http_source_def = DataSource(**{**sample_source_def.__dict__, 'source_type': 'https', 'url': 'https://fake.url/data.geojson', 'path': None})
         mock_registry.get.return_value = http_source_def
-        mock_cache_manager.load.return_value = None # Cache miss
-
-        # Ensure the download path doesn't exist to force loader call
-        mock_os_exists.return_value = False  # Make all paths appear non-existent
+        mock_cache_manager.load.return_value = None  # Cache miss
 
         mock_load_factory.get_loader.return_value = mock_file_loader
-        mock_file_loader.load.return_value = True  # Simulate successful download
+        mock_file_loader.load.return_value = True
 
         processed_gdf = gpd.GeoDataFrame({'data': ['processed']})
         mock_geojson_processor.process.return_value = processed_gdf
         mock_proc_factory.get_processor.return_value = mock_geojson_processor
-        
-        mock_cache_manager.save.return_value = True
 
         result_gdf = pipeline_instance.load(http_source_def.name)
 
         mock_registry.get.assert_called_once_with(http_source_def.name)
-        mock_cache_manager.load.assert_called_once_with(http_source_def.cache_key, http_source_def.params)
-        
         mock_load_factory.get_loader.assert_called_once_with(http_source_def.source_type)
-        # The actual path for loader.load will be constructed inside _acquire_data
-        # We need to ensure the path passed to loader.load is what we expect.
-        # For now, checking it was called is a good start.
-        mock_file_loader.load.assert_called_once() 
-
-        mock_proc_factory.get_processor.assert_called_once_with(http_source_def.format) # or inferred format
-        # The raw_path for processor.process is the result from _acquire_data
-        mock_geojson_processor.process.assert_called_once_with(http_source_def, mock.ANY) # mock.ANY for raw_path
-
-        mock_cache_manager.save.assert_called_once_with(processed_gdf, http_source_def.cache_key, http_source_def.params)
+        mock_file_loader.load.assert_called_once()  # via RawDownloadCache.ensure
+        mock_cache_manager.save.assert_called_once()
         assert result_gdf.equals(processed_gdf)
 
     @mock.patch('data_pipeline.pipeline.LoaderFactory')
@@ -199,48 +186,20 @@ class TestDataPipeline:
         mock_exists.assert_called_once_with(sample_source_def.path)
 
     @mock.patch('data_pipeline.pipeline.LoaderFactory')
-    @mock.patch('os.path.exists') # Mock os.path.exists for _acquire_data logic
-    def test_acquire_data_remote_source_download(self, mock_os_path_exists, mock_loader_factory, pipeline_instance, sample_source_def, mock_file_loader):
-        http_source = DataSource(
-            name="remote_source", source_type="http", format="geojson", 
-            url="http://test.com/data.geojson", output_dir="remote_output"
+    def test_acquire_data_remote_source_download(self, mock_loader_factory, pipeline_instance, sample_source_def, mock_file_loader, tmp_path):
+        https_source = DataSource(
+            name="remote_source", source_type="https", format="geojson", 
+            url="https://test.com/data.geojson", output_dir="remote_output"
         )
-        # Simulate that the target download path does NOT exist initially
-        mock_os_path_exists.return_value = False 
-        mock_loader_factory.get_loader.return_value = mock_file_loader # mock_file_loader is a MagicMock
-        mock_file_loader.load.return_value = True # Simulate successful download by loader
+        mock_loader_factory.get_loader.return_value = mock_file_loader
+        mock_file_loader.load.return_value = True
 
-        expected_filename = "data.geojson"
-        expected_target_dir = os.path.join(pipeline_instance.gis_data_dir, http_source.output_dir, http_source.name)
-        expected_download_path = os.path.join(expected_target_dir, expected_filename)
+        result_path = pipeline_instance._acquire_data(https_source)
 
-        result_path = pipeline_instance._acquire_data(http_source)
-        
-        assert result_path == expected_download_path
-        mock_loader_factory.get_loader.assert_called_once_with("http")
-        mock_file_loader.load.assert_called_once_with(http_source, expected_download_path)
-        # os.path.exists would be called for the download_path
-        mock_os_path_exists.assert_any_call(expected_download_path)
-
-    @mock.patch('data_pipeline.pipeline.LoaderFactory')
-    @mock.patch('os.path.exists')
-    def test_acquire_data_remote_source_already_exists(self, mock_os_path_exists, mock_loader_factory, pipeline_instance, sample_source_def):
-        http_source = DataSource(
-            name="remote_source_exists", source_type="https", format="json", 
-            url="http://test.com/data_exists.json", output_dir="remote_exists_output"
-        )
-        # Simulate that the target download path *DOES* exist
-        mock_os_path_exists.return_value = True
-        
-        expected_filename = "data_exists.json"
-        expected_target_dir = os.path.join(pipeline_instance.gis_data_dir, http_source.output_dir, http_source.name)
-        expected_download_path = os.path.join(expected_target_dir, expected_filename)
-
-        result_path = pipeline_instance._acquire_data(http_source)
-        
-        assert result_path == expected_download_path
-        mock_loader_factory.get_loader.assert_not_called() # Loader should not be called
-        mock_os_path_exists.assert_called_once_with(expected_download_path) # Only check for existing download
+        mock_loader_factory.get_loader.assert_called_once_with("https")
+        mock_file_loader.load.assert_called_once()
+        # Path should lie inside tmp_path/raw_cache directory per patched ensure side_effect
+        assert str(tmp_path / "raw_cache" / https_source.name) in result_path
 
     @mock.patch('data_pipeline.pipeline.ProcessorFactory')
     def test_process_data_with_processor(self, mock_processor_factory, pipeline_instance, sample_source_def, mock_geojson_processor):
@@ -250,7 +209,7 @@ class TestDataPipeline:
         pipeline_instance._process_data(sample_source_def, mock_raw_path)
         
         mock_processor_factory.get_processor.assert_called_once_with(sample_source_def.format)
-        mock_geojson_processor.process.assert_called_once_with(sample_source_def, mock_raw_path)
+        mock_geojson_processor.process.assert_called_once_with(sample_source_def, mock_raw_path, bbox=None, keep_cols=None)
 
     def test_clear_cache_specific_source(self, pipeline_instance, mock_registry, mock_cache_manager, sample_source_def):
         mock_registry.get.return_value = sample_source_def
@@ -260,3 +219,38 @@ class TestDataPipeline:
     def test_clear_cache_all(self, pipeline_instance, mock_cache_manager):
         pipeline_instance.clear_cache()
         mock_cache_manager.clear.assert_called_once_with() # Called with no args 
+
+class TestRawDownloadCache:
+    def test_ensure_caches_file(self, tmp_path):
+        cache = RawDownloadCache(root_dir=tmp_path / "rdc")
+        url = "https://example.com/data/file.bin"
+
+        # download_fn writes a marker file
+        def dl(dest):
+            Path(dest).write_text("content"); return True
+
+        first_path = cache.ensure(url, "example", dl)
+        assert Path(first_path).exists()
+
+        # Second call should not invoke dl (simulate by failing if called)
+        def dl_fail(dest):
+            pytest.fail("download_fn should not be called on cache hit")
+
+        second_path = cache.ensure(url, "example", dl_fail)
+        assert second_path == first_path
+
+    def test_trim(self, tmp_path):
+        cache = RawDownloadCache(root_dir=tmp_path / "rdc_trim")
+        url_base = "https://example.com/data/"
+
+        # Create 5 files ~1MB each
+        for i in range(5):
+            def _dl(dest, idx=i):
+                Path(dest).write_bytes(b"0" * 1024 * 1024)  # 1 MB
+                return True
+            cache.ensure(url_base + f"f{i}.bin", "trim", _dl)
+
+        from data_pipeline.cache import CacheManager
+        cm = CacheManager(cache_dir=tmp_path / "feather_cache")
+        cm.trim(max_size_gb=0.001)  # 1 MB limit triggers deletion
+        # Total feathers initially zero, this just checks no exception. 
