@@ -94,10 +94,11 @@ scipy 1.11.*
 scikit-learn 1.2.*
 EOL
 
-echo "Installing specific packages via pip (bertopic, python-dotenv, pgvector)..."
+echo "Installing specific packages via pip (bertopic, python-dotenv, pgvector, pytest)..."
 pip install --no-deps "bertopic[visualization]==0.15.0" # Added [visualization] for plotly dep if needed by bertopic itself
 pip install "python-dotenv>=0.20.0"
 pip install "pgvector>=0.2.0"
+pip install "pytest>=7.0.0" # Added pytest for testing framework
 
 python -c "import bertopic; print(f'✓ BERTopic imported successfully (version {bertopic.__version__})')" || echo "✗ BERTopic import failed!"
 python -c "import dotenv; print(f'✓ python-dotenv imported successfully')" || echo "✗ python-dotenv import failed!"
@@ -167,7 +168,7 @@ else
 import sys
 print('Python version:', sys.version)
 print('Testing critical imports:')
-modules = ['numpy', 'pandas', 'geopandas', 'sklearn', 'spacy', 'bertopic', 'nltk', 'sentence_transformers', 'kneed', 'dotenv', 'pgvector']
+modules = ['numpy', 'pandas', 'geopandas', 'sklearn', 'spacy', 'bertopic', 'nltk', 'sentence_transformers', 'kneed', 'dotenv', 'pgvector', 'pytest']
 import nltk
 custom_nltk_path = '$NLTK_DATA_DIR'
 if custom_nltk_path not in nltk.data.path:
