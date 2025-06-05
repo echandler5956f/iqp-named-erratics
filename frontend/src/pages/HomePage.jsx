@@ -227,6 +227,114 @@ const GLOBAL_FILTER_DEFINITIONS = {
       </div>
     ),
   },
+  proximity_natd_road: {
+    label: 'Proximity to NATD Road (meters)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistNatdRoad">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistNatdRoad"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  cultural_significance_score: {
+    label: 'Cultural Significance Score (0-10)',
+    defaultConfig: { min: null, max: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="minCulturalSignificance">Min:</label>
+        <input
+          type="number"
+          id="minCulturalSignificance"
+          min="0" max="10"
+          value={config.min ?? ''}
+          onChange={(e) => onChange({ ...config, min: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="0-10"
+        />
+        <label htmlFor="maxCulturalSignificance">Max:</label>
+        <input
+          type="number"
+          id="maxCulturalSignificance"
+          min="0" max="10"
+          value={config.max ?? ''}
+          onChange={(e) => onChange({ ...config, max: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="0-10"
+        />
+      </div>
+    ),
+  },
+  discovery_date: {
+    label: 'Discovery Date',
+    defaultConfig: { startYear: null, endYear: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="startYear">From Year:</label>
+        <input
+          type="number"
+          id="startYear"
+          min="1000" max={new Date().getFullYear()}
+          value={config.startYear ?? ''}
+          onChange={(e) => onChange({ ...config, startYear: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="e.g., 1620"
+        />
+        <label htmlFor="endYear">To Year:</label>
+        <input
+          type="number"
+          id="endYear"
+          min="1000" max={new Date().getFullYear()}
+          value={config.endYear ?? ''}
+          onChange={(e) => onChange({ ...config, endYear: e.target.value ? parseInt(e.target.value, 10) : null })}
+          placeholder="e.g., 1900"
+        />
+      </div>
+    ),
+  },
+  estimated_age: {
+    label: 'Estimated Age',
+    defaultConfig: { age: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="estimatedAge">Age:</label>
+        <input
+          type="text"
+          id="estimatedAge"
+          value={config.age ?? ''}
+          onChange={(e) => onChange({ ...config, age: e.target.value })}
+          placeholder="e.g., Pleistocene (case insensitive)"
+        />
+      </div>
+    ),
+  },
+  elevation: {
+    label: 'Elevation (meters)',
+    defaultConfig: { min: null, max: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="minElevation">Min:</label>
+        <input
+          type="number"
+          id="minElevation"
+          value={config.min ?? ''}
+          onChange={(e) => onChange({ ...config, min: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Min elevation"
+        />
+        <label htmlFor="maxElevation">Max:</label>
+        <input
+          type="number"
+          id="maxElevation"
+          value={config.max ?? ''}
+          onChange={(e) => onChange({ ...config, max: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max elevation"
+        />
+      </div>
+    ),
+  },
   size_category: {
     label: 'Size Category',
     defaultConfig: { category: '' },
@@ -402,6 +510,12 @@ function HomePage() {
     return Array.from(positions).sort();
   }, [allErraticData]);
 
+  const distinctEstimatedAges = useMemo(() => {
+    if (!Array.isArray(allErraticData)) return [];
+    const ages = new Set(allErraticData.map(e => e.estimated_age).filter(Boolean));
+    return Array.from(ages).sort();
+  }, [allErraticData]);
+
   // Define GLOBAL_FILTER_DEFINITIONS with dynamic data
   const GLOBAL_FILTER_DEFINITIONS_WITH_DATA = useMemo(() => ({
     ...GLOBAL_FILTER_DEFINITIONS,
@@ -495,6 +609,24 @@ function HomePage() {
         </div>
       ),
     },
+    estimated_age: {
+      ...GLOBAL_FILTER_DEFINITIONS.estimated_age,
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="estimatedAge">Age:</label>
+          <select
+            id="estimatedAge"
+            value={config.age ?? ''}
+            onChange={(e) => onChange({ ...config, age: e.target.value })}
+          >
+            <option value="">Any Estimated Age</option>
+            {distinctEstimatedAges.map(age => (
+              <option key={age} value={age}>{age}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
     slope_position: {
       ...GLOBAL_FILTER_DEFINITIONS.slope_position,
       Component: ({ config, onChange, styles: panelStyles }) => (
@@ -513,7 +645,7 @@ function HomePage() {
         </div>
       ),
     },
-  }), [distinctRockTypes, distinctUsageTags, distinctTerrainLandforms, distinctSizeCategories, distinctGeologicalTypes, distinctSlopePositions]);
+  }), [distinctRockTypes, distinctUsageTags, distinctTerrainLandforms, distinctSizeCategories, distinctGeologicalTypes, distinctEstimatedAges, distinctSlopePositions]);
 
   const activeFilters = useMemo(() => filters.filter(f => f.isActive), [filters]);
 

@@ -23,25 +23,125 @@ function FilterItem({ filter, filterDefinition, onToggleActive, onEdit, onDelete
   }
 
   let configSummary = '';
-  if (filter.type === 'size') {
-    const { min, max } = filter.config;
-    const minStr = (min !== null && !isNaN(min)) ? `>= ${min} (meters)` : '';
-    const maxStr = (max !== null && !isNaN(max)) ? `<= ${max} (meters)` : '';
-    configSummary = `Size: ${minStr}${minStr && maxStr ? ' & ' : ''}${maxStr}`.trim() || 'Any size';
-    if (!minStr && !maxStr && (min !== null || max !== null)) configSummary = 'Invalid size range'; // Handle case where input might be non-numeric
+  switch (filter.type) {
+    case 'size':
+      const { min: sizeMin, max: sizeMax } = filter.config;
+      const minSizeStr = (sizeMin !== null && !isNaN(sizeMin)) ? `>= ${sizeMin}m` : '';
+      const maxSizeStr = (sizeMax !== null && !isNaN(sizeMax)) ? `<= ${sizeMax}m` : '';
+      configSummary = `Size: ${minSizeStr}${minSizeStr && maxSizeStr ? ' & ' : ''}${maxSizeStr}`.trim() || 'Any size';
+      break;
 
-  } else if (filter.type === 'proximity_water') {
-    const { maxDist } = filter.config;
-    configSummary = (maxDist !== null && !isNaN(maxDist)) ? `Dist. to Water <= ${maxDist} (meters)` : 'Any distance to water';
+    case 'proximity_water':
+      const { maxDist: waterMaxDist } = filter.config;
+      configSummary = (waterMaxDist !== null && !isNaN(waterMaxDist)) ? `Water <= ${waterMaxDist}m` : 'Any distance to water';
+      break;
 
-  } else if (filter.type === 'rock_type') {
-    configSummary = filter.config.type ? `Rock Type: ${filter.config.type}` : 'Any rock type';
-  
-  } else if (filter.type === 'usage_type') {
-    configSummary = filter.config.tag ? `Usage Contains: ${filter.config.tag}` : 'Any usage type';
+    case 'proximity_forest_trail':
+      const { maxDist: trailMaxDist } = filter.config;
+      configSummary = (trailMaxDist !== null && !isNaN(trailMaxDist)) ? `Forest Trail <= ${trailMaxDist}m` : 'Any distance to forest trail';
+      break;
 
-  } else if (filter.type === 'has_inscriptions') {
-    configSummary = filter.config.required ? 'Must Have Inscriptions' : 'Inscriptions not required';
+    case 'proximity_settlement':
+      const { maxDist: settlementMaxDist } = filter.config;
+      configSummary = (settlementMaxDist !== null && !isNaN(settlementMaxDist)) ? `Settlement <= ${settlementMaxDist}m` : 'Any distance to settlement';
+      break;
+
+    case 'proximity_road':
+      const { maxDist: roadMaxDist } = filter.config;
+      configSummary = (roadMaxDist !== null && !isNaN(roadMaxDist)) ? `Road <= ${roadMaxDist}m` : 'Any distance to road';
+      break;
+
+    case 'proximity_natd_road':
+      const { maxDist: natdRoadMaxDist } = filter.config;
+      configSummary = (natdRoadMaxDist !== null && !isNaN(natdRoadMaxDist)) ? `NATD Road <= ${natdRoadMaxDist}m` : 'Any distance to NATD road';
+      break;
+
+    case 'proximity_native_territory':
+      const { maxDist: territoryMaxDist } = filter.config;
+      configSummary = (territoryMaxDist !== null && !isNaN(territoryMaxDist)) ? `Native Territory <= ${territoryMaxDist}m` : 'Any distance to native territory';
+      break;
+
+    case 'elevation_category':
+      configSummary = filter.config.category ? `Elevation: ${filter.config.category}` : 'Any elevation category';
+      break;
+
+    case 'elevation':
+      const { min: elevMin, max: elevMax } = filter.config;
+      const minElevStr = (elevMin !== null && !isNaN(elevMin)) ? `>= ${elevMin}m` : '';
+      const maxElevStr = (elevMax !== null && !isNaN(elevMax)) ? `<= ${elevMax}m` : '';
+      configSummary = `Elevation: ${minElevStr}${minElevStr && maxElevStr ? ' & ' : ''}${maxElevStr}`.trim() || 'Any elevation';
+      break;
+
+    case 'rock_type':
+      configSummary = filter.config.type ? `Rock Type: ${filter.config.type}` : 'Any rock type';
+      break;
+
+    case 'estimated_age':
+      configSummary = filter.config.age ? `Age: ${filter.config.age}` : 'Any estimated age';
+      break;
+
+    case 'usage_type':
+      configSummary = filter.config.tag ? `Usage: ${filter.config.tag}` : 'Any usage type';
+      break;
+
+    case 'has_inscriptions':
+      configSummary = filter.config.required ? 'Must have inscriptions' : 'Inscriptions not required';
+      break;
+
+    case 'accessibility_score':
+      const { min: accessMin, max: accessMax } = filter.config;
+      const minAccessStr = (accessMin !== null && !isNaN(accessMin)) ? `>= ${accessMin}` : '';
+      const maxAccessStr = (accessMax !== null && !isNaN(accessMax)) ? `<= ${accessMax}` : '';
+      configSummary = `Accessibility: ${minAccessStr}${minAccessStr && maxAccessStr ? ' & ' : ''}${maxAccessStr}`.trim() || 'Any accessibility';
+      break;
+
+    case 'cultural_significance_score':
+      const { min: cultMin, max: cultMax } = filter.config;
+      const minCultStr = (cultMin !== null && !isNaN(cultMin)) ? `>= ${cultMin}` : '';
+      const maxCultStr = (cultMax !== null && !isNaN(cultMax)) ? `<= ${cultMax}` : '';
+      configSummary = `Cultural Significance: ${minCultStr}${minCultStr && maxCultStr ? ' & ' : ''}${maxCultStr}`.trim() || 'Any cultural significance';
+      break;
+
+    case 'terrain_landform':
+      configSummary = filter.config.type ? `Landform: ${filter.config.type}` : 'Any terrain landform';
+      break;
+
+    case 'slope_position':
+      configSummary = filter.config.type ? `Slope Position: ${filter.config.type}` : 'Any slope position';
+      break;
+
+    case 'size_category':
+      configSummary = filter.config.category ? `Size Category: ${filter.config.category}` : 'Any size category';
+      break;
+
+    case 'geological_type':
+      configSummary = filter.config.type ? `Geological Type: ${filter.config.type}` : 'Any geological type';
+      break;
+
+    case 'displacement_distance':
+      const { min: displMin, max: displMax } = filter.config;
+      const minDisplStr = (displMin !== null && !isNaN(displMin)) ? `>= ${displMin}m` : '';
+      const maxDisplStr = (displMax !== null && !isNaN(displMax)) ? `<= ${displMax}m` : '';
+      configSummary = `Displacement: ${minDisplStr}${minDisplStr && maxDisplStr ? ' & ' : ''}${maxDisplStr}`.trim() || 'Any displacement';
+      break;
+
+    case 'ruggedness':
+      const { min: rugMin, max: rugMax } = filter.config;
+      const minRugStr = (rugMin !== null && !isNaN(rugMin)) ? `>= ${rugMin}` : '';
+      const maxRugStr = (rugMax !== null && !isNaN(rugMax)) ? `<= ${rugMax}` : '';
+      configSummary = `Ruggedness (TRI): ${minRugStr}${minRugStr && maxRugStr ? ' & ' : ''}${maxRugStr}`.trim() || 'Any ruggedness';
+      break;
+
+    case 'discovery_date':
+      const { startYear, endYear } = filter.config;
+      const startYearStr = (startYear !== null && !isNaN(startYear)) ? `>= ${startYear}` : '';
+      const endYearStr = (endYear !== null && !isNaN(endYear)) ? `<= ${endYear}` : '';
+      configSummary = `Discovery: ${startYearStr}${startYearStr && endYearStr ? ' & ' : ''}${endYearStr}`.trim() || 'Any discovery date';
+      break;
+
+    default:
+      configSummary = 'Filter configuration';
+      break;
   }
 
   return (
@@ -77,4 +177,4 @@ function FilterItem({ filter, filterDefinition, onToggleActive, onEdit, onDelete
   );
 }
 
-export default FilterItem; 
+export default FilterItem;

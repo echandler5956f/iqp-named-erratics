@@ -252,6 +252,93 @@ export const passesAllFilters = (erratic, activeFilters, filterDefinitions) => {
         }
         break;
 
+      case 'proximity_natd_road':
+        const maxDistNatdRoad = filter.config.maxDist;
+        const erraticDistNatdRoad = erratic.nearest_natd_road_dist;
+        if (erraticDistNatdRoad === null || erraticDistNatdRoad === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (maxDistNatdRoad !== null && typeof maxDistNatdRoad === 'number' && !isNaN(maxDistNatdRoad)) {
+          if (erraticDistNatdRoad > maxDistNatdRoad) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'cultural_significance_score':
+        const minCulturalSignificance = filter.config.min;
+        const maxCulturalSignificance = filter.config.max;
+        const erraticCulturalSignificance = erratic.cultural_significance_score;
+        if (erraticCulturalSignificance === null || erraticCulturalSignificance === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (minCulturalSignificance !== null && typeof minCulturalSignificance === 'number' && !isNaN(minCulturalSignificance)) {
+          if (erraticCulturalSignificance < minCulturalSignificance) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (maxCulturalSignificance !== null && typeof maxCulturalSignificance === 'number' && !isNaN(maxCulturalSignificance)) {
+          if (erraticCulturalSignificance > maxCulturalSignificance) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'discovery_date':
+        const startYear = filter.config.startYear;
+        const endYear = filter.config.endYear;
+        const erraticDiscoveryDate = erratic.discovery_date;
+        if (!erraticDiscoveryDate) {
+          passesCurrentFilter = false;
+          break;
+        }
+        const discoveryYear = new Date(erraticDiscoveryDate).getFullYear();
+        if (startYear !== null && typeof startYear === 'number' && !isNaN(startYear)) {
+          if (discoveryYear < startYear) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (endYear !== null && typeof endYear === 'number' && !isNaN(endYear)) {
+          if (discoveryYear > endYear) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'estimated_age':
+        const filterEstimatedAge = filter.config.age?.trim().toLowerCase();
+        if (filterEstimatedAge) {
+          if (!erratic.estimated_age || erratic.estimated_age.toLowerCase() !== filterEstimatedAge) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'elevation':
+        const minElevation = filter.config.min;
+        const maxElevation = filter.config.max;
+        const erraticElevation = erratic.elevation;
+        if (erraticElevation === null || erraticElevation === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (minElevation !== null && typeof minElevation === 'number' && !isNaN(minElevation)) {
+          if (erraticElevation < minElevation) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (maxElevation !== null && typeof maxElevation === 'number' && !isNaN(maxElevation)) {
+          if (erraticElevation > maxElevation) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
       default:
         console.warn(`Unknown filter type in passesAllFilters: ${filter.type}`);
         break;

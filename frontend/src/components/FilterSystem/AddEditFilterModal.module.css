@@ -62,6 +62,13 @@
   box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
 }
 
+.formGroup select {
+  /* Global CSS handles appearance: none and background-image */
+  /* Keep only component-specific overrides for modal styling */
+  padding-right: 40px;
+  background-position: right 10px center;
+}
+
 /* Added a wrapper class for better targeting */
 .configurationArea {
   padding: 15px;

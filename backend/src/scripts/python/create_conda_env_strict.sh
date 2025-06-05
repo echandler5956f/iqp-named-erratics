@@ -95,12 +95,12 @@ scikit-learn 1.2.*
 EOL
 
 echo "Installing specific packages via pip (bertopic, python-dotenv, pgvector, pytest)..."
-pip install --no-deps "bertopic[visualization]==0.15.0" # Added [visualization] for plotly dep if needed by bertopic itself
+pip install "sentence-transformers==2.2.2"
+pip install "transformers>=4.17.0,<4.18.0" "huggingface-hub>=0.11.0,<0.12.0"
+pip install "bertopic[visualization]==0.15.0"
 pip install "python-dotenv>=0.20.0"
 pip install "pgvector>=0.2.0"
-pip install "pytest>=7.0.0" # Added pytest for testing framework
-pip install "sentence-transformers==2.2.2"
-pip install "huggingface-hub<0.20.0,>=0.19.0"
+pip install "pytest>=7.0.0"
 
 python -c "import bertopic; print(f'BERTopic imported successfully (version {bertopic.__version__})')" || echo "BERTopic import failed!"
 python -c "import dotenv; print(f'python-dotenv imported successfully')" || echo "python-dotenv import failed!"
@@ -116,6 +116,8 @@ python -c "
 import nltk
 import ssl
 import os
+import time
+import shutil
 
 custom_nltk_path = '$NLTK_DATA_DIR'
 if custom_nltk_path not in nltk.data.path:
@@ -132,58 +134,120 @@ else:
 
 essential_packages = ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger']
 for pkg_name in essential_packages:
-    download_successful = False
+    download_successful_for_pkg = False
     resource_paths_to_check = []
     if pkg_name == 'punkt':
         resource_paths_to_check.append('tokenizers/punkt')
     elif pkg_name == 'stopwords':
         resource_paths_to_check.append('corpora/stopwords')
     elif pkg_name == 'wordnet':
-        resource_paths_to_check.append('corpora/wordnet')
+        wordnet_zip_path = os.path.join(custom_nltk_path, 'corpora', 'wordnet.zip')
+        wordnet_dir_path = os.path.join(custom_nltk_path, 'corpora', 'wordnet')
+
+        if os.path.exists(wordnet_zip_path):
+            print(f\"Removing existing {wordnet_zip_path}\")
+            os.remove(wordnet_zip_path)
+        if os.path.exists(wordnet_dir_path):
+            print(f\"Removing existing directory {wordnet_dir_path}\")
+            shutil.rmtree(wordnet_dir_path)
+        
+        os.makedirs(os.path.join(custom_nltk_path, 'corpora'), exist_ok=True)
+
+        download_attempts = 1 
+        wordnet_download_succeeded_according_to_nltk = False
+        for attempt in range(download_attempts):
+            try:
+                print(f\"Attempting to download NLTK package: {pkg_name} to {custom_nltk_path}\")
+                nltk.download(pkg_name, download_dir=custom_nltk_path, quiet=False, force=True, raise_on_error=True)
+                wordnet_download_succeeded_according_to_nltk = True
+                break
+            except Exception as e_download:
+                print(f\"Error during nltk.download for {pkg_name}: {e_download}\")
+
+        if wordnet_download_succeeded_according_to_nltk or os.path.exists(wordnet_zip_path):
+            if os.path.exists(wordnet_zip_path):
+                print(f\"Found {wordnet_zip_path}. Attempting manual unzip.\")
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(wordnet_zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(os.path.join(custom_nltk_path, 'corpora'))
+                    print(f\"Manually unzipped {wordnet_zip_path} to {os.path.join(custom_nltk_path, 'corpora')}\")
+                    if os.path.exists(wordnet_dir_path):
+                        print(f\"Directory {wordnet_dir_path} exists after manual unzip.\")
+                        download_successful_for_pkg = True 
+                    else:
+                        print(f\"Directory {wordnet_dir_path} DOES NOT exist after manual unzip.\")
+                except Exception as e_unzip:
+                    print(f\"Error manually unzipping {wordnet_zip_path}: {e_unzip}\")
+            else:
+                print(f\"{wordnet_zip_path} not found even after nltk.download claimed success or was up-to-date.\")
+        else:
+            print(f\"NLTK download for {pkg_name} did not result in a zip file and did not claim success.\")
+
+        if download_successful_for_pkg: 
+            try:
+                nltk.data.find('corpora/wordnet')
+                print(f\"Successfully verified NLTK resource for {pkg_name} (corpora/wordnet) after potential manual unzip.\")
+            except LookupError:
+                print(f\"Verification for {pkg_name} (corpora/wordnet) FAILED even after potential manual unzip.\")
+                download_successful_for_pkg = False
+        else:
+            print(f\"Skipping final verification for {pkg_name} as download/unzip stage indicated failure.\")
+            
     elif pkg_name == 'averaged_perceptron_tagger':
         resource_paths_to_check.append('taggers/averaged_perceptron_tagger')
-    else: 
+    else:
         resource_paths_to_check.append(f\"corpora/{pkg_name}\")
         resource_paths_to_check.append(f\"tokenizers/{pkg_name}\")
         resource_paths_to_check.append(f\"taggers/{pkg_name}\")
 
     found_locally = False
-    for res_path in resource_paths_to_check:
+    if resource_paths_to_check:
         try:
-            nltk.data.find(res_path)
-            print(f\"NLTK resource for {pkg_name} ({res_path}) already found in {nltk.data.path}.\")
+            nltk.data.find(resource_paths_to_check[0])
+            print(f\"NLTK resource for {pkg_name} ({resource_paths_to_check[0]}) already found.\")
             found_locally = True
-            download_successful = True
-            break
-        except nltk.downloader.DownloadError:
-            pass 
-        except Exception as e:
-            print(f\"Unexpected error checking for NLTK resource {res_path} for {pkg_name}: {e}\")
+            download_successful_for_pkg = True
+        except LookupError:
+            print(f\"NLTK resource for {pkg_name} not found locally via {resource_paths_to_check[0]}. Will attempt download.\")
+        except Exception as e_find:
+            print(f\"Unexpected error checking for NLTK resource {resource_paths_to_check[0]} for {pkg_name}: {e_find}\")
 
     if not found_locally:
-        print(f\"Attempting to download NLTK package: {pkg_name} to {custom_nltk_path}\")
-        try:
-            nltk.download(pkg_name, download_dir=custom_nltk_path, quiet=False, force=False, raise_on_error=True)
-            verified_after_download = False
-            for res_path in resource_paths_to_check:
-                try:
-                    nltk.data.find(res_path) 
-                    print(f\"Successfully downloaded and verified NLTK resource for {pkg_name} ({res_path}).\")
-                    verified_after_download = True
-                    download_successful = True
-                    break
-                except nltk.downloader.DownloadError:
-                    continue 
-            if not verified_after_download:
-                 print(f\"Warning: NLTK resource for {pkg_name} might not have been downloaded/verified correctly into {custom_nltk_path}. Searched for {resource_paths_to_check}\")
-        except Exception as e:
-            print(f\"Error downloading NLTK package {pkg_name}: {e}\")
-            print(f'You might need to manually run: python -m nltk.downloader -d \"{custom_nltk_path}\" {pkg_name}')
+        download_attempts = 3
+        for attempt in range(download_attempts):
+            try:
+                print(f\"Attempt {attempt + 1} of {download_attempts} to download NLTK package: {pkg_name} to {custom_nltk_path}\")
+                nltk.download(pkg_name, download_dir=custom_nltk_path, quiet=False, force=False, raise_on_error=True)
+                if resource_paths_to_check:
+                    nltk.data.find(resource_paths_to_check[0]) 
+                    print(f\"Successfully downloaded and verified NLTK resource for {pkg_name} ({resource_paths_to_check[0]}).\")
+                else:
+                    print(f\"Successfully downloaded NLTK package {pkg_name} (no specific resource path to verify).\")
+                download_successful_for_pkg = True
+                break 
+            except LookupError as le_verify: 
+                print(f\"Verification failed for {pkg_name} after download attempt {attempt + 1}: {le_verify}\")
+                if attempt < download_attempts - 1:
+                    print(f\"Retrying download for {pkg_name}...\")
+                    time.sleep(2)
+                else:
+                    print(f\"Failed to download/verify {pkg_name} after {download_attempts} attempts due to verification LookupError.\")
+            except Exception as e_download: 
+                print(f\"An error occurred during NLTK download attempt {attempt + 1} for {pkg_name}: {e_download}\")
+                if attempt < download_attempts - 1:
+                    print(f\"Retrying download for {pkg_name}...\")
+                    time.sleep(2) 
+                else:
+                    print(f\"Failed to download {pkg_name} after {download_attempts} attempts due to error: {e_download}.\")
+        
+        if not download_successful_for_pkg:
+            print(f\"Warning: NLTK package {pkg_name} could not be successfully downloaded and verified after multiple attempts.\")
 
 print(\"NLTK essential data download process completed.\")
 
-print(\"\nVerifying WordNet installation specifically (with custom path prioritized)...\")
-if custom_nltk_path not in nltk.data.path: 
+print(\"\\nVerifying WordNet installation specifically (with custom path prioritized)...\")
+if custom_nltk_path not in nltk.data.path:
     nltk.data.path.insert(0, custom_nltk_path)
 try:
     nltk.data.find('corpora/wordnet')
@@ -198,8 +262,8 @@ try:
         print(f\"  WordNet confirmed in custom download path: {custom_nltk_path}\")
     else:
         print(f\"  Warning: WordNet found, but not in the expected custom path: {custom_nltk_path}\")
-except nltk.downloader.DownloadError:
-    print(\"WordNet still not found by NLTK after download attempts.\")
+except LookupError: 
+    print(\"WordNet still not found by NLTK.\")
     print(f\"  Please check the directory structure, e.g., {custom_nltk_path}/corpora/wordnet or {custom_nltk_path}/corpora/wordnet.zip\")
     print(f\"  NLTK search paths were: {nltk.data.path}\")
     print(f'  Consider running: python -m nltk.downloader -d \"{custom_nltk_path}\" wordnet')
@@ -240,8 +304,11 @@ all_good = True
 for m in modules:
     try:
         if m == 'huggingface_hub':
-            from huggingface_hub import HfApi 
+            from huggingface_hub import HfApi # Try importing something common
             print(f\"{m} (HfApi) imported successfully\")
+        elif m == 'sentence_transformers':
+            import sentence_transformers
+            print(f\"{m} imported successfully (version {sentence_transformers.__version__})\")
         else:
             __import__(m)
             print(f\"{m} imported successfully\")
