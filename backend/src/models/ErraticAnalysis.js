@@ -83,23 +83,7 @@ module.exports = (sequelize, DataTypes) => {
         min: { args: [0], msg: 'Distance cannot be negative.' }
       }
     },
-    nearest_colonial_settlement_dist: {
-      type: DataTypes.FLOAT,
-      allowNull: true,
-      validate: {
-        isFloat: { args: true, msg: 'Distance must be a number.' },
-        min: { args: [0], msg: 'Distance cannot be negative.' }
-      }
-    },
     nearest_road_dist: {
-      type: DataTypes.FLOAT,
-      allowNull: true,
-      validate: {
-        isFloat: { args: true, msg: 'Distance must be a number.' },
-        min: { args: [0], msg: 'Distance cannot be negative.' }
-      }
-    },
-    nearest_colonial_road_dist: {
       type: DataTypes.FLOAT,
       allowNull: true,
       validate: {
@@ -115,8 +99,22 @@ module.exports = (sequelize, DataTypes) => {
         min: { args: [0], msg: 'Distance cannot be negative.' }
       }
     },
-    // Proximity distances calculated by analysis scripts.
-    // Some, like colonial settlements/roads, still depend on specific dataset acquisition.
+    nearest_natd_road_dist: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      validate: {
+        isFloat: { args: true, msg: 'Distance to NATD road must be a number.' },
+        min: { args: [0], msg: 'Distance to NATD road cannot be negative.' }
+      }
+    },
+    nearest_forest_trail_dist: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      validate: {
+        isFloat: { args: true, msg: 'Distance to forest trail must be a number.' },
+        min: { args: [0], msg: 'Distance to forest trail cannot be negative.' }
+      }
+    },
     elevation_category: {
       type: DataTypes.STRING(50),
       allowNull: true,
