@@ -211,6 +211,121 @@ const GLOBAL_FILTER_DEFINITIONS = {
       </div>
     ),
   },
+  proximity_native_territory: {
+    label: 'Proximity to Native Territory (meters)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistNativeTerritory">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistNativeTerritory"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  size_category: {
+    label: 'Size Category',
+    defaultConfig: { category: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="sizeCategory">Category:</label>
+        <select
+          id="sizeCategory"
+          value={config.category ?? ''}
+          onChange={(e) => onChange({ ...config, category: e.target.value })}
+        >
+          <option value="">Any Size Category</option>
+          {/* Options will be populated dynamically */}
+        </select>
+      </div>
+    ),
+  },
+  geological_type: {
+    label: 'Geological Type',
+    defaultConfig: { type: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="geologicalType">Type:</label>
+        <select
+          id="geologicalType"
+          value={config.type ?? ''}
+          onChange={(e) => onChange({ ...config, type: e.target.value })}
+        >
+          <option value="">Any Geological Type</option>
+          {/* Options will be populated dynamically */}
+        </select>
+      </div>
+    ),
+  },
+  displacement_distance: {
+    label: 'Estimated Displacement (meters)', // Assuming meters based on other distance fields
+    defaultConfig: { min: null, max: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="minDisplacement">Min:</label>
+        <input
+          type="number"
+          id="minDisplacement"
+          value={config.min ?? ''}
+          onChange={(e) => onChange({ ...config, min: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Min distance"
+        />
+        <label htmlFor="maxDisplacement">Max:</label>
+        <input
+          type="number"
+          id="maxDisplacement"
+          value={config.max ?? ''}
+          onChange={(e) => onChange({ ...config, max: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  ruggedness: {
+    label: 'Terrain Ruggedness (TRI)',
+    defaultConfig: { min: null, max: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="minRuggedness">Min:</label>
+        <input
+          type="number"
+          id="minRuggedness"
+          value={config.min ?? ''}
+          onChange={(e) => onChange({ ...config, min: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Min TRI"
+        />
+        <label htmlFor="maxRuggedness">Max:</label>
+        <input
+          type="number"
+          id="maxRuggedness"
+          value={config.max ?? ''}
+          onChange={(e) => onChange({ ...config, max: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max TRI"
+        />
+      </div>
+    ),
+  },
+  slope_position: {
+    label: 'Terrain Slope Position',
+    defaultConfig: { type: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="slopePosition">Position:</label>
+        <select
+          id="slopePosition"
+          value={config.type ?? ''}
+          onChange={(e) => onChange({ ...config, type: e.target.value })}
+        >
+          <option value="">Any Slope Position</option>
+          {/* Options will be populated dynamically */}
+        </select>
+      </div>
+    ),
+  },
 };
 
 function HomePage() {
@@ -266,6 +381,25 @@ function HomePage() {
     if (!Array.isArray(allErraticData)) return [];
     const landforms = new Set(allErraticData.map(e => e.terrain_landform).filter(Boolean)); 
     return Array.from(landforms).sort();
+  }, [allErraticData]);
+
+  const distinctSizeCategories = useMemo(() => {
+    if (!Array.isArray(allErraticData)) return [];
+    const categories = new Set(allErraticData.map(e => e.size_category).filter(Boolean));
+    // Expected values: "Small", "Medium", "Large", "Monumental" - sorting might be okay
+    return Array.from(categories).sort(); 
+  }, [allErraticData]);
+
+  const distinctGeologicalTypes = useMemo(() => {
+    if (!Array.isArray(allErraticData)) return [];
+    const types = new Set(allErraticData.map(e => e.geological_type).filter(Boolean));
+    return Array.from(types).sort();
+  }, [allErraticData]);
+  
+  const distinctSlopePositions = useMemo(() => {
+    if (!Array.isArray(allErraticData)) return [];
+    const positions = new Set(allErraticData.map(e => e.terrain_slope_position).filter(Boolean));
+    return Array.from(positions).sort();
   }, [allErraticData]);
 
   // Define GLOBAL_FILTER_DEFINITIONS with dynamic data
@@ -325,7 +459,61 @@ function HomePage() {
         </div>
       ),
     },
-  }), [distinctRockTypes, distinctUsageTags, distinctTerrainLandforms]);
+    size_category: {
+      ...GLOBAL_FILTER_DEFINITIONS.size_category,
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="sizeCategory">Category:</label>
+          <select
+            id="sizeCategory"
+            value={config.category ?? ''}
+            onChange={(e) => onChange({ ...config, category: e.target.value })}
+          >
+            <option value="">Any Size Category</option>
+            {distinctSizeCategories.map(category => (
+              <option key={category} value={category}>{category}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
+    geological_type: {
+      ...GLOBAL_FILTER_DEFINITIONS.geological_type,
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="geologicalType">Type:</label>
+          <select
+            id="geologicalType"
+            value={config.type ?? ''}
+            onChange={(e) => onChange({ ...config, type: e.target.value })}
+          >
+            <option value="">Any Geological Type</option>
+            {distinctGeologicalTypes.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
+    slope_position: {
+      ...GLOBAL_FILTER_DEFINITIONS.slope_position,
+      Component: ({ config, onChange, styles: panelStyles }) => (
+        <div className={panelStyles.filterConfigRow}>
+          <label htmlFor="slopePosition">Position:</label>
+          <select
+            id="slopePosition"
+            value={config.type ?? ''}
+            onChange={(e) => onChange({ ...config, type: e.target.value })}
+          >
+            <option value="">Any Slope Position</option>
+            {distinctSlopePositions.map(position => (
+              <option key={position} value={position}>{position}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
+  }), [distinctRockTypes, distinctUsageTags, distinctTerrainLandforms, distinctSizeCategories, distinctGeologicalTypes, distinctSlopePositions]);
 
   const activeFilters = useMemo(() => filters.filter(f => f.isActive), [filters]);
 

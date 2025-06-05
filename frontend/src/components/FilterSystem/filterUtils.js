@@ -169,6 +169,89 @@ export const passesAllFilters = (erratic, activeFilters, filterDefinitions) => {
         }
         break;
 
+      case 'proximity_native_territory':
+        const maxDistNativeTerritory = filter.config.maxDist;
+        const erraticDistNativeTerritory = erratic.nearest_native_territory_dist;
+        if (erraticDistNativeTerritory === null || erraticDistNativeTerritory === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (maxDistNativeTerritory !== null && typeof maxDistNativeTerritory === 'number' && !isNaN(maxDistNativeTerritory)) {
+          if (erraticDistNativeTerritory > maxDistNativeTerritory) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'size_category':
+        const filterSizeCategory = filter.config.category?.trim().toLowerCase();
+        if (filterSizeCategory) {
+          if (!erratic.size_category || erratic.size_category.toLowerCase() !== filterSizeCategory) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'geological_type':
+        const filterGeologicalType = filter.config.type?.trim().toLowerCase();
+        if (filterGeologicalType) {
+          if (!erratic.geological_type || erratic.geological_type.toLowerCase() !== filterGeologicalType) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'displacement_distance':
+        const minDisplacement = filter.config.min;
+        const maxDisplacement = filter.config.max;
+        const erraticDisplacement = erratic.estimated_displacement_dist;
+        if (erraticDisplacement === null || erraticDisplacement === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (minDisplacement !== null && typeof minDisplacement === 'number' && !isNaN(minDisplacement)) {
+          if (erraticDisplacement < minDisplacement) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (maxDisplacement !== null && typeof maxDisplacement === 'number' && !isNaN(maxDisplacement)) {
+          if (erraticDisplacement > maxDisplacement) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'ruggedness':
+        const minRuggedness = filter.config.min;
+        const maxRuggedness = filter.config.max;
+        const erraticRuggedness = erratic.ruggedness_tri;
+        if (erraticRuggedness === null || erraticRuggedness === undefined) {
+          passesCurrentFilter = false;
+          break;
+        }
+        if (minRuggedness !== null && typeof minRuggedness === 'number' && !isNaN(minRuggedness)) {
+          if (erraticRuggedness < minRuggedness) {
+            passesCurrentFilter = false;
+            break;
+          }
+        }
+        if (maxRuggedness !== null && typeof maxRuggedness === 'number' && !isNaN(maxRuggedness)) {
+          if (erraticRuggedness > maxRuggedness) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
+      case 'slope_position':
+        const filterSlopePosition = filter.config.type?.trim().toLowerCase();
+        if (filterSlopePosition) {
+          if (!erratic.terrain_slope_position || erratic.terrain_slope_position.toLowerCase() !== filterSlopePosition) {
+            passesCurrentFilter = false;
+          }
+        }
+        break;
+
       default:
         console.warn(`Unknown filter type in passesAllFilters: ${filter.type}`);
         break;

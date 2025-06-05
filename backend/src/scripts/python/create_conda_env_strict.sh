@@ -18,7 +18,7 @@ if ! command -v conda &> /dev/null; then
   exit 1
 fi
 
-ENV_NAME="iqp-py310"
+ENV_NAME="glacial-erratics"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 NLTK_DATA_DIR="$SCRIPT_DIR/nltk_data_local"
 
@@ -70,13 +70,13 @@ echo "Installing build tools (Cython, Compilers)..."
 conda install -y -c conda-forge cython gcc_linux-64 gxx_linux-64
 
 echo "Installing core scientific stack with conda (conda-forge priority)..."
-conda install -y -c conda-forge joblib>=1.1.1 numpy=1.24.3 scipy=1.11.4 scikit-learn=1.2.2 pandas
+conda install -y -c conda-forge "joblib>=1.1.1" numpy=1.24.3 scipy=1.11.4 scikit-learn=1.2.2 pandas
 
 echo "Installing geospatial packages with conda-forge..."
-conda install -y -c conda-forge geopandas=0.10.2 shapely=1.8.0 pyproj=3.3.0 rtree=1.0.0 pyarrow>=8.0.0 requests>=2.27.0 rasterio>=1.2.10 matplotlib>=3.5.0
+conda install -y -c conda-forge geopandas shapely pyproj rtree "pyarrow>=8.0.0" "requests>=2.27.0" rasterio matplotlib
 
 echo "Installing NLP/ML stack with conda-forge..."
-conda install -y -c conda-forge nltk=3.7.0 kneed=0.8.5 sentence-transformers=2.2.2 hdbscan=0.8.29 umap-learn=0.5.3 spacy=3.4.0
+conda install -y -c conda-forge nltk=3.7.0 kneed=0.8.5 hdbscan=0.8.29 umap-learn=0.5.3 spacy=3.4.0 pyyaml
 
 echo "Installing Plotly (needed for bertopic)..."
 conda install -y -c conda-forge plotly
@@ -99,10 +99,12 @@ pip install --no-deps "bertopic[visualization]==0.15.0" # Added [visualization] 
 pip install "python-dotenv>=0.20.0"
 pip install "pgvector>=0.2.0"
 pip install "pytest>=7.0.0" # Added pytest for testing framework
+pip install "sentence-transformers==2.2.2"
+pip install "huggingface-hub<0.20.0,>=0.19.0"
 
-python -c "import bertopic; print(f'✓ BERTopic imported successfully (version {bertopic.__version__})')" || echo "✗ BERTopic import failed!"
-python -c "import dotenv; print(f'✓ python-dotenv imported successfully')" || echo "✗ python-dotenv import failed!"
-python -c "import pgvector.psycopg2; print(f'✓ pgvector.psycopg2 imported successfully')" || echo "✗ pgvector.psycopg2 import failed!"
+python -c "import bertopic; print(f'BERTopic imported successfully (version {bertopic.__version__})')" || echo "BERTopic import failed!"
+python -c "import dotenv; print(f'python-dotenv imported successfully')" || echo "python-dotenv import failed!"
+python -c "import pgvector.psycopg2; print(f'pgvector.psycopg2 imported successfully')" || echo "pgvector.psycopg2 import failed!"
 
 echo "Installing spaCy models..."
 python -m spacy download en_core_web_md
@@ -113,12 +115,13 @@ mkdir -p "$NLTK_DATA_DIR"
 python -c "
 import nltk
 import ssl
+import os
 
 custom_nltk_path = '$NLTK_DATA_DIR'
 if custom_nltk_path not in nltk.data.path:
     nltk.data.path.insert(0, custom_nltk_path)
 
-print(f'NLTK data path configured to: {nltk.data.path}')
+print(f\"NLTK data path configured to: {nltk.data.path}\")
 
 try:
     _create_unverified_https_context = ssl._create_unverified_context
@@ -128,19 +131,79 @@ else:
     ssl._create_default_https_context = _create_unverified_https_context
 
 essential_packages = ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger']
-for pkg in essential_packages:
-    try:
-        nltk.data.find(f'tokenizers/{pkg}') # Check for tokenizers
-        print(f'NLTK package {pkg} already found.')
-    except nltk.downloader.DownloadError:
+for pkg_name in essential_packages:
+    download_successful = False
+    resource_paths_to_check = []
+    if pkg_name == 'punkt':
+        resource_paths_to_check.append('tokenizers/punkt')
+    elif pkg_name == 'stopwords':
+        resource_paths_to_check.append('corpora/stopwords')
+    elif pkg_name == 'wordnet':
+        resource_paths_to_check.append('corpora/wordnet')
+    elif pkg_name == 'averaged_perceptron_tagger':
+        resource_paths_to_check.append('taggers/averaged_perceptron_tagger')
+    else: 
+        resource_paths_to_check.append(f\"corpora/{pkg_name}\")
+        resource_paths_to_check.append(f\"tokenizers/{pkg_name}\")
+        resource_paths_to_check.append(f\"taggers/{pkg_name}\")
+
+    found_locally = False
+    for res_path in resource_paths_to_check:
         try:
-            nltk.data.find(f'corpora/{pkg}') # Check for corpora
-            print(f'NLTK package {pkg} already found.')
+            nltk.data.find(res_path)
+            print(f\"NLTK resource for {pkg_name} ({res_path}) already found in {nltk.data.path}.\")
+            found_locally = True
+            download_successful = True
+            break
         except nltk.downloader.DownloadError:
-            print(f'Downloading NLTK package: {pkg} to {custom_nltk_path}')
-            nltk.download(pkg, download_dir=custom_nltk_path, quiet=True)
-print('NLTK essential data download process completed.')
-" 
+            pass 
+        except Exception as e:
+            print(f\"Unexpected error checking for NLTK resource {res_path} for {pkg_name}: {e}\")
+
+    if not found_locally:
+        print(f\"Attempting to download NLTK package: {pkg_name} to {custom_nltk_path}\")
+        try:
+            nltk.download(pkg_name, download_dir=custom_nltk_path, quiet=False, force=False, raise_on_error=True)
+            verified_after_download = False
+            for res_path in resource_paths_to_check:
+                try:
+                    nltk.data.find(res_path) 
+                    print(f\"Successfully downloaded and verified NLTK resource for {pkg_name} ({res_path}).\")
+                    verified_after_download = True
+                    download_successful = True
+                    break
+                except nltk.downloader.DownloadError:
+                    continue 
+            if not verified_after_download:
+                 print(f\"Warning: NLTK resource for {pkg_name} might not have been downloaded/verified correctly into {custom_nltk_path}. Searched for {resource_paths_to_check}\")
+        except Exception as e:
+            print(f\"Error downloading NLTK package {pkg_name}: {e}\")
+            print(f'You might need to manually run: python -m nltk.downloader -d \"{custom_nltk_path}\" {pkg_name}')
+
+print(\"NLTK essential data download process completed.\")
+
+print(\"\nVerifying WordNet installation specifically (with custom path prioritized)...\")
+if custom_nltk_path not in nltk.data.path: 
+    nltk.data.path.insert(0, custom_nltk_path)
+try:
+    nltk.data.find('corpora/wordnet')
+    print(\"WordNet is available to NLTK.\")
+    wordnet_in_custom_path = False
+    for p in nltk.data.path:
+        if os.path.exists(os.path.join(p, 'corpora', 'wordnet')) or os.path.exists(os.path.join(p, 'corpora', 'wordnet.zip')):
+            if custom_nltk_path in p:
+                 wordnet_in_custom_path = True
+            print(f\"  Found 'corpora/wordnet' in: {p}\")
+    if wordnet_in_custom_path:
+        print(f\"  WordNet confirmed in custom download path: {custom_nltk_path}\")
+    else:
+        print(f\"  Warning: WordNet found, but not in the expected custom path: {custom_nltk_path}\")
+except nltk.downloader.DownloadError:
+    print(\"WordNet still not found by NLTK after download attempts.\")
+    print(f\"  Please check the directory structure, e.g., {custom_nltk_path}/corpora/wordnet or {custom_nltk_path}/corpora/wordnet.zip\")
+    print(f\"  NLTK search paths were: {nltk.data.path}\")
+    print(f'  Consider running: python -m nltk.downloader -d \"{custom_nltk_path}\" wordnet')
+"
 
 echo "Verifying NLTK tokenization works with custom path..."
 python -c "
@@ -150,11 +213,11 @@ if custom_nltk_path not in nltk.data.path:
     nltk.data.path.insert(0, custom_nltk_path)
 try:
     tokens = nltk.word_tokenize(\"This is a test sentence.\")
-    print(f'NLTK tokenization successful: {tokens}')
+    print(f\"NLTK tokenization successful: {tokens}\")
 except Exception as e:
-    print(f'NLTK tokenization failed: {e}')
-    print(f'NLTK data path was: {nltk.data.path}')
-    print(f'Please check {custom_nltk_path} for NLTK data.')
+    print(f\"NLTK tokenization failed: {e}\")
+    print(f\"NLTK data path was: {nltk.data.path}\")
+    print(f\"Please check {custom_nltk_path} for NLTK data.\")
 "
 
 echo -e "\nConda environment '$ENV_NAME' has been set up."
@@ -167,8 +230,8 @@ else
   python -c "
 import sys
 print('Python version:', sys.version)
-print('Testing critical imports:')
-modules = ['numpy', 'pandas', 'geopandas', 'sklearn', 'spacy', 'bertopic', 'nltk', 'sentence_transformers', 'kneed', 'dotenv', 'pgvector', 'pytest']
+print(\"Testing critical imports:\")
+modules = ['numpy', 'pandas', 'geopandas', 'sklearn', 'spacy', 'bertopic', 'nltk', 'sentence_transformers', 'kneed', 'dotenv', 'pgvector', 'pytest', 'huggingface_hub']
 import nltk
 custom_nltk_path = '$NLTK_DATA_DIR'
 if custom_nltk_path not in nltk.data.path:
@@ -176,23 +239,27 @@ if custom_nltk_path not in nltk.data.path:
 all_good = True
 for m in modules:
     try:
-        __import__(m)
-        print(f'✓ {m} imported successfully')
+        if m == 'huggingface_hub':
+            from huggingface_hub import HfApi 
+            print(f\"{m} (HfApi) imported successfully\")
+        else:
+            __import__(m)
+            print(f\"{m} imported successfully\")
     except ImportError as e:
-        print(f'✗ {m} import failed: {e}')
+        print(f\"{m} import failed: {e}\")
         all_good = False
     except Exception as e:
-        print(f'✗ Error importing {m}: {e}')
+        print(f\"Error importing {m}: {e}\")
         all_good = False
 
 try:
     tokens = nltk.word_tokenize('This large glacial erratic was transported here during the last ice age.')
-    print(f'✓ NLTK tokenization works: {tokens[:3]}...')
+    print(f\"NLTK tokenization works: {tokens[:3]}...\")
 except Exception as e:
-    print(f'✗ NLTK tokenization failed: {e}')
+    print(f\"NLTK tokenization failed: {e}\")
     all_good = False
 
-print('\\nBasic environment check ' + ('passed' if all_good else 'failed'))
+print('\nBasic environment check ' + ('passed' if all_good else 'failed'))
 "
 fi
 
