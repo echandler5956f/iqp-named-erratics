@@ -107,11 +107,12 @@
 }
 
 .errorText::before {
-  content: '⚠';
+  content: '!';
   display: block;
   font-size: var(--font-size-3xl);
   margin-bottom: var(--spacing-3);
   color: var(--color-error-400);
+  font-weight: var(--font-weight-bold);
 }
 
 .noResultsText {
@@ -123,11 +124,12 @@
 }
 
 .noResultsText::before {
-  content: '🔍';
+  content: '●';
   display: block;
   font-size: var(--font-size-3xl);
   margin-bottom: var(--spacing-3);
   opacity: 0.7;
+  color: var(--color-accent-bronze);
 }
 
 /* === MAP INTEGRATION === */
@@ -138,12 +140,12 @@
   border-radius: 0;
 }
 
-/* Custom map overlay for research branding */
+/* Custom map overlay for research branding - positioned to avoid controls */
 .mapContainer::after {
   content: 'Glacial Erratics Research Database';
   position: absolute;
   bottom: var(--spacing-4);
-  right: var(--spacing-4);
+  right: var(--spacing-16);
   padding: var(--spacing-2) var(--spacing-3);
   background: var(--color-bg-secondary);
   color: var(--color-text-muted);
@@ -156,6 +158,7 @@
   z-index: var(--z-index-banner);
   font-family: var(--font-family-mono);
   letter-spacing: 0.5px;
+  max-width: 200px;
 }
 
 /* === RESPONSIVE DESIGN === */
@@ -194,10 +197,11 @@
   }
   
   .mapContainer::after {
-    bottom: var(--spacing-2);
-    right: var(--spacing-2);
+    top: var(--spacing-4);
+    left: var(--spacing-2);
     font-size: var(--font-size-xs);
     padding: var(--spacing-1) var(--spacing-2);
+    max-width: 150px;
   }
 }
 

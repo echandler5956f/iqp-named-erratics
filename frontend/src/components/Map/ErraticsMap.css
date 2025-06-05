@@ -248,10 +248,11 @@
 }
 
 .error::before {
-  content: '⚠';
+  content: '!';
   font-size: var(--font-size-5xl);
   color: var(--color-error-500);
   margin-bottom: var(--spacing-4);
+  font-weight: var(--font-weight-bold);
 }
 
 /* === RESPONSIVE DESIGN === */
@@ -391,26 +392,119 @@
   color: var(--color-text-primary) !important;
 }
 
-/* Override control styling */
-.leaflet-control-layers,
-.leaflet-control-zoom {
+/* Enhanced Layers Control Styling for Dark Theme */
+.leaflet-control-layers {
   background: var(--color-bg-secondary) !important;
   border: var(--border-width-1) solid var(--color-neutral-600) !important;
-  border-radius: var(--radius-md) !important;
-  box-shadow: var(--shadow-lg) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-xl) !important;
+  backdrop-filter: blur(8px) !important;
 }
 
 .leaflet-control-layers-toggle {
   background-color: var(--color-bg-secondary) !important;
+  background-image: none !important;
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: var(--radius-md) !important;
+  border: var(--border-width-1) solid var(--color-neutral-600) !important;
+  position: relative !important;
+}
+
+.leaflet-control-layers-toggle::before {
+  content: '☰' !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  color: var(--color-text-primary) !important;
+  font-size: 16px !important;
+  font-weight: bold !important;
+}
+
+.leaflet-control-layers-toggle:hover {
+  background-color: var(--color-bg-tertiary) !important;
+  border-color: var(--color-accent-gold) !important;
+}
+
+.leaflet-control-layers-expanded {
+  padding: var(--spacing-4) !important;
+  background: var(--color-bg-secondary) !important;
+  color: var(--color-text-primary) !important;
+  border: var(--border-width-1) solid var(--color-neutral-600) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-xl) !important;
+  min-width: 180px !important;
+}
+
+.leaflet-control-layers-list {
+  color: var(--color-text-primary) !important;
+}
+
+.leaflet-control-layers-base,
+.leaflet-control-layers-overlays {
+  margin-bottom: var(--spacing-3) !important;
+}
+
+.leaflet-control-layers-base label,
+.leaflet-control-layers-overlays label {
+  display: flex !important;
+  align-items: center !important;
+  gap: var(--spacing-2) !important;
+  padding: var(--spacing-2) 0 !important;
+  color: var(--color-text-secondary) !important;
+  font-size: var(--font-size-sm) !important;
+  font-weight: var(--font-weight-medium) !important;
+  cursor: pointer !important;
+  transition: var(--transition-colors) !important;
+  line-height: var(--line-height-normal) !important;
+}
+
+.leaflet-control-layers-base label:hover,
+.leaflet-control-layers-overlays label:hover {
+  color: var(--color-text-primary) !important;
+}
+
+.leaflet-control-layers-base input,
+.leaflet-control-layers-overlays input {
+  margin: 0 !important;
+  margin-right: var(--spacing-2) !important;
+  accent-color: var(--color-primary-500) !important;
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.leaflet-control-layers-separator {
+  border-top: var(--border-width-1) solid var(--color-neutral-600) !important;
+  margin: var(--spacing-3) 0 !important;
+}
+
+/* Override zoom control styling */
+.leaflet-control-zoom {
+  background: var(--color-bg-secondary) !important;
+  border: var(--border-width-1) solid var(--color-neutral-600) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  overflow: hidden !important;
 }
 
 .leaflet-control-zoom a {
   background-color: var(--color-bg-secondary) !important;
   color: var(--color-text-primary) !important;
   border-bottom: var(--border-width-1) solid var(--color-neutral-600) !important;
+  width: 36px !important;
+  height: 36px !important;
+  font-size: var(--font-size-lg) !important;
+  font-weight: var(--font-weight-bold) !important;
+  transition: var(--transition-all) !important;
 }
 
 .leaflet-control-zoom a:hover {
   background-color: var(--color-bg-tertiary) !important;
   color: var(--color-accent-gold) !important;
+  border-color: var(--color-accent-gold) !important;
+}
+
+.leaflet-control-zoom a:last-child {
+  border-bottom: none !important;
 } 

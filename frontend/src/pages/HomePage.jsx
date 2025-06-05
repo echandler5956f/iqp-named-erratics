@@ -6,7 +6,7 @@ import FilterPanel from '../components/FilterSystem/FilterPanel';
 import { getVisibleErraticIds } from '../components/FilterSystem/filterUtils';
 import styles from './HomePage.module.css';
 
-// Moved from FilterPanel.jsx to be managed at HomePage level or context
+// Updated filter definitions to match refactored backend schema
 const GLOBAL_FILTER_DEFINITIONS = {
   size: {
     label: 'Size (meters)',
@@ -45,6 +45,74 @@ const GLOBAL_FILTER_DEFINITIONS = {
           onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
           placeholder="Max distance"
         />
+      </div>
+    ),
+  },
+  proximity_forest_trail: {
+    label: 'Proximity to Forest Trail (meters)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistForestTrail">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistForestTrail"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  proximity_settlement: {
+    label: 'Proximity to Settlement (meters)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistSettlement">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistSettlement"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  proximity_road: {
+    label: 'Proximity to Road (meters)',
+    defaultConfig: { maxDist: null },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="maxDistRoad">Max Distance:</label>
+        <input
+          type="number"
+          id="maxDistRoad"
+          value={config.maxDist ?? ''}
+          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
+          placeholder="Max distance"
+        />
+      </div>
+    ),
+  },
+  elevation_category: {
+    label: 'Elevation Category',
+    defaultConfig: { category: '' },
+    Component: ({ config, onChange, styles: panelStyles }) => (
+      <div className={panelStyles.filterConfigRow}>
+        <label htmlFor="elevationCategory">Category:</label>
+        <select
+          id="elevationCategory"
+          value={config.category ?? ''}
+          onChange={(e) => onChange({ ...config, category: e.target.value })}
+        >
+          <option value="">Any Elevation</option>
+          <option value="lowland">Lowland</option>
+          <option value="highland">Highland</option>
+          <option value="mountain">Mountain</option>
+          <option value="coastal">Coastal</option>
+        </select>
       </div>
     ),
   },
@@ -134,26 +202,12 @@ const GLOBAL_FILTER_DEFINITIONS = {
           onChange={(e) => onChange({ ...config, type: e.target.value })}
         >
           <option value="">Any Landform</option>
-          {distinctTerrainLandforms.map(type => (
-            <option key={type} value={type}>{type}</option>
-          ))}
+          <option value="valley">Valley</option>
+          <option value="ridge">Ridge</option>
+          <option value="slope">Slope</option>
+          <option value="plateau">Plateau</option>
+          <option value="depression">Depression</option>
         </select>
-      </div>
-    ),
-  },
-  nearest_colonial_road_dist: {
-    label: 'Proximity to Colonial Road (m)',
-    defaultConfig: { maxDist: null },
-    Component: ({ config, onChange, styles: panelStyles }) => (
-      <div className={panelStyles.filterConfigRow}>
-        <label htmlFor="maxDistColonialRoad">Max Distance:</label>
-        <input
-          type="number"
-          id="maxDistColonialRoad"
-          value={config.maxDist ?? ''}
-          onChange={(e) => onChange({ ...config, maxDist: e.target.value ? parseFloat(e.target.value) : null })}
-          placeholder="Max distance in meters"
-        />
       </div>
     ),
   },

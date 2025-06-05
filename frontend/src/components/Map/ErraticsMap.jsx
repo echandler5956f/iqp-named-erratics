@@ -101,6 +101,7 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
         zoom={5} 
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
+        attributionControl={false} // Hide attribution control
       >
         <ZoomControl position="bottomright" />
         <LocationMarker setUserLocation={setUserLocation} />
@@ -109,105 +110,105 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
           <LayersControl.BaseLayer checked name="OpenStreetMap">
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              attribution=""
             />
           </LayersControl.BaseLayer>
           
           <LayersControl.BaseLayer name="Satellite">
             <TileLayer
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-              attribution='&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+              attribution=""
             />
           </LayersControl.BaseLayer>
           
-          <LayersControl.BaseLayer name="Terrain">
+          <LayersControl.BaseLayer name="Topographic">
             <TileLayer
-              url="https://stamen-tiles-{s}.a.ssl.fastly.net/terrain/{z}/{x}/{y}{r}.png"
-              attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a> &mdash; Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+              attribution=""
+              maxZoom={17}
             />
           </LayersControl.BaseLayer>
-          
-          <LayersControl.Overlay checked name="Filtered Erratics">
-            {erraticsToDisplay && erraticsToDisplay.map(erratic => {
-              let markerIcon = defaultErraticIcon; // Default to custom icon
-
-              if (erratic.image_url) {
-                try {
-                  // Attempt to create an icon from the erratic's image_url
-                  // Basic validation: check if it's a string and looks like a URL (very basic check)
-                  if (typeof erratic.image_url === 'string' && erratic.image_url.startsWith('http')) {
-                    markerIcon = new L.Icon({
-                      iconUrl: erratic.image_url,
-                      iconSize: [25, 41],
-                      iconAnchor: [12, 41],
-                      popupAnchor: [1, -34],
-                      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-                      shadowSize: [41, 41]
-                    });
-                  } else if (typeof erratic.image_url === 'string' && erratic.image_url) {
-                    // If it's a string but not a full URL, it might be a local path, but less safe
-                    // For now, only http/https URLs are used for per-erratic icons to avoid issues
-                    // console.warn(`Erratic ${erratic.id} has an image_url that is not a full URL: ${erratic.image_url}. Using default icon.`);
-                  }
-                } catch (e) {
-                  console.warn(`Error creating icon for erratic ${erratic.id} with image_url: ${erratic.image_url}`, e);
-                  // Fallback to defaultErraticIcon is already handled by initial assignment
-                }
-              }
-
-              if (!erratic.location || !erratic.location.coordinates || erratic.location.coordinates.length < 2) {
-                console.warn('Erratic with missing or invalid location:', erratic.id, erratic.name);
-                return null;
-              }
-
-              return (
-                <Marker 
-                  key={erratic.id} 
-                  position={[
-                    erratic.location.coordinates[1], 
-                    erratic.location.coordinates[0]
-                  ]}
-                  icon={markerIcon} // This should always be a valid L.Icon instance now
-                  eventHandlers={{
-                    click: () => {
-                      setSelectedErratic(erratic);
-                    }
-                  }}
-                >
-                  <Popup>
-                    <div className="erratic-popup">
-                      <h3>{erratic.name}</h3>
-                      {/* Show image in popup if URL exists, regardless of icon source */}
-                      {erratic.image_url && (typeof erratic.image_url === 'string' && erratic.image_url.startsWith('http')) && (
-                        <img 
-                          src={erratic.image_url} 
-                          alt={erratic.name} 
-                          className="erratic-image"
-                          onError={(e) => { e.target.style.display = 'none'; }} // Hide if image fails to load
-                        />
-                      )}
-                      <div className="erratic-details">
-                        {erratic.rock_type && <p><strong>Rock Type:</strong> {erratic.rock_type}</p>}
-                        {erratic.size_meters && <p><strong>Size:</strong> {erratic.size_meters} meters</p>}
-                        {erratic.elevation && <p><strong>Elevation:</strong> {erratic.elevation} meters</p>}
-                        {erratic.estimated_age && <p><strong>Age:</strong> {erratic.estimated_age}</p>}
-                        {/* Removed short description from popup; full details in sidebar */}
-                        {userLocation && erratic.location && erratic.location.coordinates && (
-                            <p><strong>Distance:</strong> 
-                            { (L.latLng(userLocation).distanceTo(L.latLng(erratic.location.coordinates[1], erratic.location.coordinates[0])) / 1000).toFixed(1) } km
-                            </p>
-                        )}
-                      </div>
-                      <button className="view-details-btn" onClick={() => setSelectedErratic(erratic)}>
-                        View Details
-                      </button>
-                    </div>
-                  </Popup>
-                </Marker>
-              );
-            })}
-          </LayersControl.Overlay>
         </LayersControl>
+        
+        {/* Render erratics directly on map without layers control overlay */}
+        {erraticsToDisplay && erraticsToDisplay.map(erratic => {
+          let markerIcon = defaultErraticIcon; // Default to custom icon
+
+          if (erratic.image_url) {
+            try {
+              // Attempt to create an icon from the erratic's image_url
+              // Basic validation: check if it's a string and looks like a URL (very basic check)
+              if (typeof erratic.image_url === 'string' && erratic.image_url.startsWith('http')) {
+                markerIcon = new L.Icon({
+                  iconUrl: erratic.image_url,
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                  popupAnchor: [1, -34],
+                  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+                  shadowSize: [41, 41]
+                });
+              } else if (typeof erratic.image_url === 'string' && erratic.image_url) {
+                // If it's a string but not a full URL, it might be a local path, but less safe
+                // For now, only http/https URLs are used for per-erratic icons to avoid issues
+                // console.warn(`Erratic ${erratic.id} has an image_url that is not a full URL: ${erratic.image_url}. Using default icon.`);
+              }
+            } catch (e) {
+              console.warn(`Error creating icon for erratic ${erratic.id} with image_url: ${erratic.image_url}`, e);
+              // Fallback to defaultErraticIcon is already handled by initial assignment
+            }
+          }
+
+          if (!erratic.location || !erratic.location.coordinates || erratic.location.coordinates.length < 2) {
+            console.warn('Erratic with missing or invalid location:', erratic.id, erratic.name);
+            return null;
+          }
+
+          return (
+            <Marker 
+              key={erratic.id} 
+              position={[
+                erratic.location.coordinates[1], 
+                erratic.location.coordinates[0]
+              ]}
+              icon={markerIcon} // This should always be a valid L.Icon instance now
+              eventHandlers={{
+                click: () => {
+                  setSelectedErratic(erratic);
+                }
+              }}
+            >
+              <Popup>
+                <div className="erratic-popup">
+                  <h3>{erratic.name}</h3>
+                  {/* Show image in popup if URL exists, regardless of icon source */}
+                  {erratic.image_url && (typeof erratic.image_url === 'string' && erratic.image_url.startsWith('http')) && (
+                    <img 
+                      src={erratic.image_url} 
+                      alt={erratic.name} 
+                      className="erratic-image"
+                      onError={(e) => { e.target.style.display = 'none'; }} // Hide if image fails to load
+                    />
+                  )}
+                  <div className="erratic-details">
+                    {erratic.rock_type && <p><strong>Rock Type:</strong> {erratic.rock_type}</p>}
+                    {erratic.size_meters && <p><strong>Size:</strong> {erratic.size_meters} meters</p>}
+                    {erratic.elevation && <p><strong>Elevation:</strong> {erratic.elevation} meters</p>}
+                    {erratic.estimated_age && <p><strong>Age:</strong> {erratic.estimated_age}</p>}
+                    {/* Removed short description from popup; full details in sidebar */}
+                    {userLocation && erratic.location && erratic.location.coordinates && (
+                        <p><strong>Distance:</strong> 
+                        { (L.latLng(userLocation).distanceTo(L.latLng(erratic.location.coordinates[1], erratic.location.coordinates[0])) / 1000).toFixed(1) } km
+                        </p>
+                    )}
+                  </div>
+                  <button className="view-details-btn" onClick={() => setSelectedErratic(erratic)}>
+                    View Details
+                  </button>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
       </MapContainer>
       
       {selectedErratic && (
@@ -239,9 +240,6 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
               )}
               { selectedErratic.terrain_landform && (
                 <div className="detail-section"><h3>Terrain Landform</h3><p>{selectedErratic.terrain_landform}</p></div>
-              )}
-              { typeof selectedErratic.nearest_colonial_road_dist === 'number' && (
-                <div className="detail-section"><h3>Proximity to Colonial Road</h3><p>{selectedErratic.nearest_colonial_road_dist.toFixed(0)} meters</p></div>
               )}
               { selectedErratic.usage_type && Array.isArray(selectedErratic.usage_type) && selectedErratic.usage_type.length > 0 && (
                 <div className="detail-section"><h3>Usage Types</h3><p>{selectedErratic.usage_type.join(', ')}</p></div>

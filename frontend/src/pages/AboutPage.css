@@ -1,7 +1,6 @@
 /* Dark Academic About Page */
 
 .about-page {
-  min-height: 100vh;
   background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
   color: var(--color-text-primary);
 }
