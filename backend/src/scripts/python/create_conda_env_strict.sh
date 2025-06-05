@@ -101,6 +101,8 @@ pip install "bertopic[visualization]==0.15.0"
 pip install "python-dotenv>=0.20.0"
 pip install "pgvector>=0.2.0"
 pip install "pytest>=7.0.0"
+pip install "portalocker=3.1.1"
+pip install "pyyaml=6.0.2"
 
 python -c "import bertopic; print(f'BERTopic imported successfully (version {bertopic.__version__})')" || echo "BERTopic import failed!"
 python -c "import dotenv; print(f'python-dotenv imported successfully')" || echo "python-dotenv import failed!"

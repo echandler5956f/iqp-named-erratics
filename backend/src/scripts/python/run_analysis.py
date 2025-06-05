@@ -309,11 +309,11 @@ def main():
     elif args.command == 'pipeline' or args.command is None:
         # Gather clustering kwargs sans None values
         cluster_kwargs = {k: v for k, v in {
-            'k': getattr(args, 'k', None), # Will take pipeline --k if specified, else None
-            'eps': getattr(args, 'eps', None), # Will take pipeline --eps if specified, else None
-            'min_samples': getattr(args, 'min_samples_pipeline', None), # Use the renamed pipeline arg
-            'metric': getattr(args, 'metric_pipeline', None),          # Corrected: Use the renamed pipeline arg
-            'linkage': getattr(args, 'linkage_pipeline', None),        # Corrected: Use the renamed pipeline arg
+            'k': getattr(args, 'k', None),
+            'eps': getattr(args, 'eps', None),
+            'min_samples': getattr(args, 'min_samples_pipeline', None),
+            'metric': getattr(args, 'metric_pipeline', None),
+            'linkage': getattr(args, 'linkage_pipeline', None),
         }.items() if v is not None}
 
         max_workers_override = getattr(args, 'max_workers', None)
