@@ -1,40 +1,71 @@
+/* Dark Academic About Page */
+
 .about-page {
   min-height: 100vh;
-  background-color: #f7fafc;
+  background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+  color: var(--color-text-primary);
 }
 
 .about-content {
-  max-width: 800px;
+  max-width: var(--container-lg);
   margin: 0 auto;
-  padding: 100px 20px 50px;
+  padding: var(--spacing-24) var(--spacing-6) var(--spacing-12);
 }
 
 .about-content h1 {
-  color: #2d3748;
-  margin-bottom: 30px;
-  font-size: 2.5rem;
+  color: var(--color-accent-gold);
+  margin-bottom: var(--spacing-8);
+  font-size: var(--font-size-4xl);
   text-align: center;
+  font-family: var(--font-family-serif);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .about-section {
-  margin-bottom: 40px;
-  background-color: white;
-  padding: 25px;
-  border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  margin-bottom: var(--spacing-10);
+  background: var(--color-bg-secondary);
+  padding: var(--spacing-8);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-left: var(--border-width-4) solid var(--color-secondary-600);
+  position: relative;
+  overflow: hidden;
+}
+
+.about-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(180deg, 
+    var(--color-accent-gold) 0%, 
+    var(--color-secondary-600) 50%, 
+    var(--color-primary-600) 100%);
+  opacity: 0.6;
 }
 
 .about-section h2 {
-  color: #4a5568;
+  color: var(--color-accent-bronze);
   margin-top: 0;
-  margin-bottom: 15px;
-  font-size: 1.5rem;
+  margin-bottom: var(--spacing-6);
+  font-size: var(--font-size-2xl);
+  font-family: var(--font-family-serif);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  border-bottom: var(--border-width-2) solid var(--color-neutral-600);
+  padding-bottom: var(--spacing-4);
 }
 
 .about-section p {
-  color: #4a5568;
-  line-height: 1.7;
-  margin-bottom: 15px;
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+  margin-bottom: var(--spacing-6);
+  font-size: var(--font-size-base);
 }
 
 .about-section p:last-child {
@@ -42,24 +73,81 @@
 }
 
 .about-section a {
-  color: #4299e1;
+  color: var(--color-secondary-500);
   text-decoration: none;
+  font-weight: var(--font-weight-medium);
+  transition: var(--transition-colors);
+  border-bottom: var(--border-width-1) solid transparent;
 }
 
 .about-section a:hover {
-  text-decoration: underline;
+  color: var(--color-secondary-400);
+  text-decoration: none;
+  border-bottom-color: var(--color-secondary-400);
 }
 
-@media screen and (max-width: 600px) {
+/* Special styling for research highlights */
+.about-section:first-of-type {
+  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
+  border-left-color: var(--color-accent-gold);
+}
+
+.about-section:first-of-type h2 {
+  color: var(--color-accent-gold);
+}
+
+/* Contact section special styling */
+.about-section:last-of-type {
+  background: linear-gradient(135deg, var(--color-bg-tertiary) 0%, var(--color-bg-secondary) 100%);
+  border-left-color: var(--color-primary-600);
+}
+
+.about-section:last-of-type h2 {
+  color: var(--color-primary-400);
+}
+
+/* Responsive design */
+@media screen and (max-width: 768px) {
   .about-content {
-    padding-top: 80px;
+    padding: var(--spacing-20) var(--spacing-4) var(--spacing-8);
   }
   
   .about-content h1 {
-    font-size: 2rem;
+    font-size: var(--font-size-3xl);
+    margin-bottom: var(--spacing-6);
   }
   
   .about-section {
-    padding: 20px;
+    padding: var(--spacing-6);
+    margin-bottom: var(--spacing-8);
+  }
+  
+  .about-section h2 {
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--spacing-4);
+  }
+  
+  .about-section p {
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-4);
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .about-content {
+    padding: var(--spacing-16) var(--spacing-3) var(--spacing-6);
+  }
+  
+  .about-content h1 {
+    font-size: var(--font-size-2xl);
+  }
+  
+  .about-section {
+    padding: var(--spacing-4);
+    margin-bottom: var(--spacing-6);
+  }
+  
+  .about-section h2 {
+    font-size: var(--font-size-lg);
   }
 } 

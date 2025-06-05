@@ -1,0 +1,83 @@
+/* Button Component Styles */
+
+.btn {
+  /* Base button styles are defined in global.css */
+  /* Additional component-specific styles here */
+  position: relative;
+  overflow: hidden;
+}
+
+.btn--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn--loading {
+  cursor: not-allowed;
+}
+
+.btn__spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: btn-spin 1s linear infinite;
+  margin-right: var(--spacing-2);
+}
+
+.btn__text--loading {
+  opacity: 0.7;
+}
+
+.btn__text {
+  transition: var(--transition-opacity);
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Enhanced hover effects */
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+  transition: left 0.5s;
+}
+
+.btn:hover::before {
+  left: 100%;
+}
+
+.btn--primary::before,
+.btn--secondary:hover::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+}
+
+.btn--ghost:hover::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 0, 0, 0.05),
+    transparent
+  );
+} 

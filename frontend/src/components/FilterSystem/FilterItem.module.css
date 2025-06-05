@@ -1,20 +1,29 @@
+/* Dark Academic Filter Item Styling */
+
 .filterItem {
-  background-color: #fff;
-  border: 1px solid #dee2e6;
-  border-radius: 6px;
-  padding: 12px;
-  margin-bottom: 10px;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  background: var(--color-bg-primary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+  transition: var(--transition-all);
+  box-shadow: var(--shadow-sm);
+  position: relative;
 }
 
-.filterItem.active {
-  border-left: 4px solid #28a745;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+.filterItem:hover {
+  border-color: var(--color-neutral-500);
+  box-shadow: var(--shadow-md);
 }
 
-.filterItem.inactive {
-  border-left: 4px solid #6c757d;
-  opacity: 0.8;
+.filterItem--active {
+  border-left: var(--border-width-4) solid var(--color-primary-500);
+  background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+}
+
+.filterItem--inactive {
+  opacity: 0.6;
+  border-left: var(--border-width-4) solid var(--color-neutral-600);
 }
 
 .filterItemError {
@@ -29,114 +38,205 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: var(--spacing-3);
 }
 
 .filterName {
-  font-weight: bold;
-  color: #343a40;
-  font-size: 1.05em;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+  flex-grow: 1;
+  font-family: var(--font-family-sans);
 }
 
 .filterType {
-  font-size: 0.8em;
-  color: #6c757d;
-  font-style: italic;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background: var(--color-bg-secondary);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--radius-sm);
+  border: var(--border-width-1) solid var(--color-neutral-700);
+  font-family: var(--font-family-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.filterSummary {
-  font-size: 0.85em;
-  color: #495057;
-  margin-top: 0;
-  margin-bottom: 10px;
-  padding-left: 5px;
-  border-left: 2px solid #e9ecef;
+.filterActions {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: center;
 }
 
-.filterControls {
+.toggleButton {
+  background: none;
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-2);
+  cursor: pointer;
+  transition: var(--transition-all);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  min-width: 2.5rem;
+  height: 2rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
-  gap: 8px; /* Gap between controls */
+  justify-content: center;
 }
 
-.controlButton {
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.8em;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+.toggleButton:hover {
+  border-color: var(--color-neutral-500);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+}
+
+.toggleButton--active {
+  background: var(--color-primary-600);
+  border-color: var(--color-primary-600);
+  color: var(--color-text-primary);
+}
+
+.toggleButton--active:hover {
+  background: var(--color-primary-700);
+  border-color: var(--color-primary-700);
 }
 
 .editButton {
-  background-color: #ffc107;
-  border-color: #ffc107;
-  color: #212529;
+  background: var(--color-secondary-600);
+  border: var(--border-width-1) solid var(--color-secondary-600);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-2) var(--spacing-3);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: var(--transition-all);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
 }
 
 .editButton:hover {
-  background-color: #e0a800;
-  border-color: #d39e00;
+  background: var(--color-secondary-700);
+  border-color: var(--color-secondary-700);
+  box-shadow: var(--shadow-sm);
 }
 
 .deleteButton {
-  background-color: #dc3545;
-  border-color: #dc3545;
-  color: white;
+  background: var(--color-error-600);
+  border: var(--border-width-1) solid var(--color-error-600);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-2) var(--spacing-3);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: var(--transition-all);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
 }
 
 .deleteButton:hover {
-  background-color: #c82333;
-  border-color: #bd2130;
+  background: var(--color-error-700);
+  border-color: var(--color-error-700);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Basic Toggle Switch Styles */
-.toggleSwitchContainer {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  position: relative; /* Needed for absolute positioning of slider parts */
+.filterSummary {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  margin-top: var(--spacing-2);
+  padding: var(--spacing-3);
+  background: var(--color-bg-secondary);
+  border: var(--border-width-1) solid var(--color-neutral-700);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family-mono);
 }
 
-.toggleInput {
-  opacity: 0;
-  width: 0;
-  height: 0;
+.filterSummary code {
+  background: var(--color-bg-tertiary);
+  padding: var(--spacing-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-accent-bronze);
 }
 
-.toggleSlider {
-  width: 34px;
-  height: 18px;
-  background-color: #ccc;
-  border-radius: 18px;
-  position: relative;
-  transition: background-color 0.2s;
-  margin-right: 8px; /* Space between slider and label text */
+/* Status indicators */
+.filterItem--active .filterName::before {
+  content: '●';
+  color: var(--color-success-500);
+  margin-right: var(--spacing-2);
+  font-size: var(--font-size-sm);
 }
 
-.toggleSlider::before {
-  content: "";
-  position: absolute;
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  bottom: 2px;
-  background-color: white;
-  border-radius: 50%;
-  transition: transform 0.2s;
+.filterItem--inactive .filterName::before {
+  content: '○';
+  color: var(--color-neutral-500);
+  margin-right: var(--spacing-2);
+  font-size: var(--font-size-sm);
 }
 
-.toggleInput:checked + .toggleSlider {
-  background-color: #28a745; /* Active color */
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .filterItem {
+    padding: var(--spacing-3);
+    margin-bottom: var(--spacing-3);
+  }
+  
+  .filterHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-2);
+  }
+  
+  .filterActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  
+  .filterName {
+    font-size: var(--font-size-sm);
+  }
+  
+  .filterSummary {
+    padding: var(--spacing-2);
+    font-size: var(--font-size-xs);
+  }
 }
 
-.toggleInput:checked + .toggleSlider::before {
-  transform: translateX(16px);
+@media (max-width: 480px) {
+  .filterItem {
+    padding: var(--spacing-2);
+  }
+  
+  .filterActions {
+    gap: var(--spacing-1);
+  }
+  
+  .toggleButton {
+    min-width: 2rem;
+    height: 1.75rem;
+    font-size: var(--font-size-xs);
+  }
+  
+  .editButton,
+  .deleteButton {
+    padding: var(--spacing-1) var(--spacing-2);
+  }
 }
 
-.toggleLabel {
-  font-size: 0.85em;
-  color: #495057;
+/* Accessibility improvements */
+.toggleButton:focus,
+.editButton:focus,
+.deleteButton:focus {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filterItem {
+    transition: none;
+  }
+  
+  .toggleButton,
+  .editButton,
+  .deleteButton {
+    transition: none;
+  }
 } 

@@ -7,15 +7,17 @@ import './App.css';
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/about" element={<AboutPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="*" element={<HomePage />} />
-      </Routes>
-    </Router>
+    <div className="app">
+      <Router>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="*" element={<HomePage />} />
+        </Routes>
+      </Router>
+    </div>
   );
 }
 

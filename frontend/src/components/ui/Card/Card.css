@@ -1,0 +1,97 @@
+/* Card Component Styles */
+
+.card {
+  /* Base card styles are defined in global.css */
+  /* Additional component-specific styles here */
+}
+
+/* Card Variants */
+.card--elevated {
+  box-shadow: var(--shadow-lg);
+}
+
+.card--outlined {
+  border: var(--border-width-2) solid var(--color-neutral-300);
+  box-shadow: none;
+}
+
+.card--flush {
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+/* Padding Variants */
+.card--padding-none .card__header,
+.card--padding-none .card__body,
+.card--padding-none .card__footer {
+  padding: 0;
+}
+
+.card--padding-sm .card__header,
+.card--padding-sm .card__body,
+.card--padding-sm .card__footer {
+  padding: var(--spacing-4);
+}
+
+.card--padding-lg .card__header,
+.card--padding-lg .card__body,
+.card--padding-lg .card__footer {
+  padding: var(--spacing-8);
+}
+
+/* Shadow Variants */
+.card--shadow-none {
+  box-shadow: none;
+}
+
+.card--shadow-sm {
+  box-shadow: var(--shadow-sm);
+}
+
+.card--shadow-lg {
+  box-shadow: var(--shadow-lg);
+}
+
+.card--shadow-xl {
+  box-shadow: var(--shadow-xl);
+}
+
+/* Hover Effect */
+.card--hover {
+  cursor: pointer;
+  transition: var(--transition-all);
+}
+
+.card--hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-xl);
+}
+
+/* Component Parts */
+.card__header {
+  /* Styles defined in global.css */
+}
+
+.card__body {
+  /* Styles defined in global.css */
+}
+
+.card__footer {
+  /* Styles defined in global.css */
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .card__header,
+  .card__body,
+  .card__footer {
+    padding: var(--spacing-4);
+  }
+  
+  .card--padding-lg .card__header,
+  .card--padding-lg .card__body,
+  .card--padding-lg .card__footer {
+    padding: var(--spacing-6);
+  }
+} 

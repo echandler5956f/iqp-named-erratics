@@ -1,91 +1,182 @@
+/* Dark Academic Filter Panel Styling */
+
 .filterPanel {
-  background-color: #f8f9fa;
-  padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  margin-bottom: 20px;
-  min-width: 300px;
-  max-width: 400px; /* Or adjust as needed */
+  height: 100%;
+  background: transparent;
+  color: var(--color-text-primary);
 }
 
 .filterPanel h3 {
-  margin-top: 0;
-  margin-bottom: 15px;
-  color: #333;
-  font-size: 1.2em;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
+  margin: 0 0 var(--spacing-6) 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-accent-gold);
+  font-family: var(--font-family-serif);
+  text-align: center;
+  padding: var(--spacing-4);
+  background: var(--color-bg-primary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  border-left: var(--border-width-4) solid var(--color-accent-gold);
 }
 
 .addButton {
-  background-color: #007bff;
-  color: white;
-  border: none;
-  padding: 10px 15px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 0.9em;
-  transition: background-color 0.2s ease;
-  display: block;
   width: 100%;
-  margin-bottom: 15px;
+  padding: var(--spacing-4) var(--spacing-5);
+  margin-bottom: var(--spacing-6);
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-primary-700));
+  color: var(--color-text-primary);
+  border: var(--border-width-1) solid var(--color-primary-600);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: var(--transition-all);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-family-sans);
 }
 
 .addButton:hover {
-  background-color: #0056b3;
+  background: linear-gradient(135deg, var(--color-primary-700), var(--color-primary-800));
+  border-color: var(--color-primary-700);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+
+.addButton:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
 }
 
 .filterList {
-  margin-top: 15px;
-  max-height: 400px; /* Adjust as needed */
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
 }
 
 .noFiltersText {
-  color: #6c757d;
-  font-style: italic;
   text-align: center;
-  padding: 20px 0;
+  padding: var(--spacing-8);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  background: var(--color-bg-primary);
+  border: var(--border-width-1) solid var(--color-neutral-700);
+  border-radius: var(--radius-lg);
+  border-left: var(--border-width-4) solid var(--color-secondary-600);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Styles for filter config rows within the modal, passed via FilterPanel */
+/* Filter Configuration Row Styling */
 .filterConfigRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--spacing-3);
+  margin: var(--spacing-3) 0;
 }
 
 .filterConfigRow label {
-  margin-right: 5px;
-  font-size: 0.9em;
-  color: #495057;
-  flex-shrink: 0; /* Prevent label from shrinking */
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  min-width: 60px;
 }
 
-.filterConfigRow input[type="number"],
-.filterConfigRow input[type="text"],
-.filterConfigRow select { /* Added select for dropdowns */
-  padding: 8px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
-  font-size: 0.9em;
-  flex-grow: 1; /* Allow input/select to fill remaining space */
-  min-width: 80px; /* Optional: prevent it getting too small */
-  box-sizing: border-box;
+.filterConfigRow input,
+.filterConfigRow select {
+  flex: 1;
+  min-width: 100px;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-bg-primary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  transition: var(--transition-colors);
+}
+
+.filterConfigRow input:focus,
+.filterConfigRow select:focus {
+  outline: none;
+  border-color: var(--color-primary-500);
+  box-shadow: 0 0 0 3px var(--color-primary-900);
+  background: var(--color-bg-secondary);
 }
 
 .filterConfigRow input::placeholder {
-  color: #adb5bd;
+  color: var(--color-text-muted);
 }
 
-/* 
-Optional: Specific adjustments if min/max inputs need different sizing 
-Example: target the specific div structure for size filter if needed 
+/* Checkbox specific styling */
+.filterConfigRow input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin-right: var(--spacing-2);
+  accent-color: var(--color-primary-500);
+}
 
-.filterConfigRow > input[id^='min'], 
-.filterConfigRow > input[id^='max'] {
-  flex-grow: 0;
-  width: 100px; // Restore fixed width only for these
+/* Select dropdown styling */
+.filterConfigRow select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23a8a29e' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right var(--spacing-2) center;
+  background-repeat: no-repeat;
+  background-size: 1.5em 1.5em;
+  padding-right: var(--spacing-8);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .filterPanel h3 {
+    font-size: var(--font-size-lg);
+    padding: var(--spacing-3);
+    margin-bottom: var(--spacing-4);
+  }
+  
+  .addButton {
+    padding: var(--spacing-3) var(--spacing-4);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-4);
+  }
+  
+  .filterConfigRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-2);
+  }
+  
+  .filterConfigRow label {
+    min-width: auto;
+  }
+  
+  .noFiltersText {
+    padding: var(--spacing-4);
+    font-size: var(--font-size-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .filterPanel {
+    padding: var(--spacing-2);
+  }
+  
+  .filterPanel h3 {
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-3);
+  }
+  
+  .addButton {
+    padding: var(--spacing-2) var(--spacing-3);
+  }
+  
+  .filterList {
+    gap: var(--spacing-3);
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  .addButton:hover {
+    transform: none;
+  }
 } 
-*/ 
