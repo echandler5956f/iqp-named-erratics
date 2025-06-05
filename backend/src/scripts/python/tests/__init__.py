@@ -1,3 +1,1 @@
-"""
-Test package for Python scripts.
-""" 
+# This file makes Python treat the 'tests' directory as a package. 

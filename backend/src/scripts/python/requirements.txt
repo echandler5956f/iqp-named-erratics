@@ -32,6 +32,9 @@ requests>=2.27.0  # For API requests
 rasterio>=1.2.10  # For DEM data processing
 matplotlib>=3.5.0  # For terrain visualization if needed
 
+# Testing Framework
+pytest>=7.0.0
+
 # After pip installing these packages, run: 
 # python -m spacy download en_core_web_md
 # python -m spacy download en_core_web_lg

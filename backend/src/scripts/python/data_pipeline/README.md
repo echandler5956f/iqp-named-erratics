@@ -1,12 +1,12 @@
 # Data Pipeline System
 
-A modular replacement for the monolithic `data_loader.py` that provides clean separation of concerns and easy extensibility.
+A modular replacement for the (old, deprecated) monolithic `data_loader.py` that provides clean separation of concerns and easy extensibility.
 
 ## Overview
 
 The data pipeline system separates data loading into distinct components:
 
-- **DataSource**: Configuration for where and how to get data
+- **DataSource**: Configuration for where and how to get data, including support for tiled datasets.
 - **DataRegistry**: Central registry of all data sources
 - **Loaders**: Protocol-specific data acquisition (HTTP, FTP, file)
 - **Processors**: Format-specific data processing (Shapefile, GeoJSON, PBF)
@@ -164,10 +164,16 @@ geological_data = load_data('special_analysis_data')  # From cache
 #### DataSource
 Encapsulates all information needed to acquire and process data:
 - Source location (URL, file path)
-- Source type (HTTP, FTP, file, database)
-- Data format (Shapefile, GeoJSON, PBF, etc.)
+- Source type (HTTP, FTP, file, database, manual)
+- Data format (Shapefile, GeoJSON, PBF, GeoTIFF, etc.)
 - Processing parameters
 - Output configuration
+- For **tiled datasets** (like GMTED elevation data):
+    - `is_tiled` (boolean): Marks the source as a collection of tiles.
+    - `tile_paths` (list): List of file paths for each individual, locally available tile.
+    - `tile_urls` (list): List of URLs if tiles are remote (less common for current setup).
+    - `tile_centers` (list of tuples): List of (longitude, latitude) for the center of each tile.
+    - `tile_size_degrees` (float): The side length of each square tile in decimal degrees.
 
 #### DataRegistry
 Central registry that manages all data sources:
@@ -274,7 +280,7 @@ ProcessorFactory._processors['netcdf'] = NetCDFProcessor
 ```python
 from data_pipeline import DataSource, registry, load_data
 
-# 1. Define a new data source
+# 1. Define a new data source (non-tiled example)
 earthquake_data = DataSource(
     name='usgs_earthquakes',
     source_type='https',
@@ -285,14 +291,32 @@ earthquake_data = DataSource(
         'min_magnitude': 4.0  # Custom parameter
     }
 )
-
-# 2. Register it
 registry.register(earthquake_data)
 
-# 3. Load the data
+# Example of a Tiled DataSource definition (conceptual, actual in data_sources.py):
+# gmted_elevation_tiled = DataSource(
+#     name='gmted_elevation_tiled',
+#     source_type='file', # Assuming tiles are local
+#     format='geotiff',
+#     is_tiled=True,
+#     tile_paths=['/path/to/tile1.tif', '/path/to/tile2.tif'],
+#     tile_centers=[(-75.0, 45.0), (-70.0, 40.0)], # (lon, lat)
+#     tile_size_degrees=30.0,
+#     description='Tiled GMTED Elevation Data'
+# )
+# registry.register(gmted_elevation_tiled)
+
+# 3. Load the data (for non-tiled sources directly, or specific tiles via custom logic)
+# For non-tiled:
 earthquakes = load_data('usgs_earthquakes')
 
-# 4. Use runtime parameters
+# For tiled sources like 'gmted_elevation_tiled', scripts like geo_utils.py
+# would typically access the registry to get the DataSource object,
+# then use its tile_paths, tile_centers, and tile_size_degrees to find and 
+# directly use the path to the relevant tile for a given point of interest.
+# The main load_data('gmted_elevation_tiled') might not be used to load all tiles at once.
+
+# 4. Use runtime parameters (for non-tiled sources)
 big_quakes = load_data('usgs_earthquakes', min_magnitude=6.0)
 ```
 

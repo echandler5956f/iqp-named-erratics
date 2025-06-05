@@ -7,12 +7,20 @@
     "start:frontend": "cd frontend && npm run dev",
     "start:backend": "cd backend && npm run dev",
     "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
-    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "db:migrate": "npx sequelize-cli db:migrate",
+    "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
+    "db:migrate:undo:all": "npx sequelize-cli db:migrate:undo:all",
+    "db:seed:all": "npx sequelize-cli db:seed:all"
   },
   "keywords": ["glacial", "erratics", "map", "gis"],
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "sequelize": "^6.37.3",
+    "sequelize-cli": "^6.6.2",
+    "pg": "^8.11.3",
+    "pg-hstore": "^2.3.4"
   }
 }
