@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, LayersControl, ZoomControl, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, LayersControl, ZoomControl, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './ErraticsMap.css';
@@ -32,34 +32,28 @@ const defaultErraticIcon = new L.Icon({
 //   shadowSize: [41, 41]
 // });
 
-// Component to handle user's current location
-const LocationMarker = ({ setUserLocation }) => {
+// ------------------------------------------------------------
+//  Map helper – fit bounds to path & user location
+// ------------------------------------------------------------
+const FitBoundsToPath = ({ path, userLocation }) => {
   const map = useMap();
-
   useEffect(() => {
-    map.locate({ setView: false });
-    
-    map.on('locationfound', (e) => {
-      setUserLocation([e.latlng.lat, e.latlng.lng]);
-      console.log('User location found:', e.latlng);
-    });
-    
-    map.on('locationerror', (err) => {
-      console.warn('Location access error:', err.message);
-    });
+    if ((!path || path.length === 0) && !userLocation) return;
 
-    // Cleanup
-    return () => {
-      map.off('locationfound');
-      map.off('locationerror');
-    };
-  }, [map, setUserLocation]);
+    const bounds = [];
+    if (Array.isArray(path)) {
+      path.forEach((coord) => bounds.push(coord));
+    }
+    if (userLocation) bounds.push(userLocation);
 
+    if (bounds.length > 0) {
+      map.fitBounds(bounds, { padding: [40, 40] });
+    }
+  }, [path, userLocation, map]);
   return null;
 };
 
-function ErraticsMap({ erratics: erraticsToDisplay }) {
-  const [userLocation, setUserLocation] = useState(null);
+function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
   const [selectedErratic, setSelectedErratic] = useState(null);
 
   const mapCenter = useMemo(() => {
@@ -74,6 +68,15 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
     }
     return [40, -100]; // Default center of USA if no erratics or first has no location
   }, [erraticsToDisplay]);
+
+  // Get theme colors directly from CSS custom properties
+  const themePrimaryColor = useMemo(() => {
+    return getComputedStyle(document.documentElement).getPropertyValue('--color-accent-navy').trim() || '#1e3a8a';
+  }, []);
+
+  const themeAccentBurgundy = useMemo(() => {
+    return getComputedStyle(document.documentElement).getPropertyValue('--color-accent-burgundy').trim() || '#800020';
+  }, []);
 
   // --- ESC Key Handler for Sidebar ---
   useEffect(() => {
@@ -95,17 +98,121 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
 
   return (
     <div className="map-container">
-      <MapContainer 
-        key={mapCenter.join('-') + '-' + (erraticsToDisplay ? erraticsToDisplay.length : 0)} // Add erratic length to key for re-render on data change
-        center={mapCenter} 
-        zoom={5} 
+      <MapContainer
+        key={mapCenter.join('-') + '-' + (erraticsToDisplay ? erraticsToDisplay.length : 0)}
+        center={mapCenter}
+        zoom={5}
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
-        attributionControl={false} // Hide attribution control
+        attributionControl={false}
       >
         <ZoomControl position="bottomright" />
-        <LocationMarker setUserLocation={setUserLocation} />
-        
+
+        {/* Fit bounds helper */}
+        <FitBoundsToPath path={tspPath} userLocation={userLocation} />
+
+        {/* Render TSP path - lines first, then points for proper z-order */}
+        {tspPath && tspPath.length > 1 && (
+          <>
+            {/* Background glow for the path */}
+            <Polyline 
+              positions={tspPath} 
+              pathOptions={{ 
+                color: themePrimaryColor, 
+                weight: 6, 
+                opacity: 0.25,
+                lineCap: 'round',
+                lineJoin: 'round'
+              }} 
+            />
+            {/* Main path line */}
+            <Polyline 
+              positions={tspPath} 
+              pathOptions={{ 
+                color: themePrimaryColor, 
+                weight: 3, 
+                opacity: 0.9,
+                lineCap: 'round',
+                lineJoin: 'round'
+              }} 
+            />
+          </>
+        )}
+
+        {/* Render waypoint markers AFTER lines so they appear on top */}
+        {tspPath && tspPath.length > 1 && tspPath.map((coord, idx) => (
+          <CircleMarker 
+            key={`path-waypoint-${idx}`} 
+            center={coord} 
+            radius={4} 
+            pathOptions={{ 
+              color: themeAccentBurgundy, 
+              fillColor: themeAccentBurgundy, 
+              fillOpacity: 1,
+              weight: 2,
+              opacity: 1
+            }}
+          >
+            <Popup>
+              <div style={{ 
+                color: 'var(--color-text-primary)', 
+                fontFamily: 'var(--font-family-sans)',
+                textAlign: 'center'
+              }}>
+                <strong style={{ color: 'var(--color-accent-burgundy)' }}>Stop {idx + 1}</strong>
+                <br />
+                <small style={{ color: 'var(--color-text-secondary)' }}>
+                  Waypoint {coord[0].toFixed(4)}, {coord[1].toFixed(4)}
+                </small>
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
+
+        {/* User location marker with distinctive styling */}
+        {userLocation && (
+          <>
+            {/* Outer glow ring */}
+            <CircleMarker
+              center={userLocation}
+              radius={12}
+              pathOptions={{ 
+                color: themeAccentBurgundy, 
+                fillColor: themeAccentBurgundy, 
+                fillOpacity: 0.2,
+                weight: 1,
+                opacity: 0.6
+              }}
+            />
+            {/* Main marker */}
+            <CircleMarker
+              center={userLocation}
+              radius={7}
+              pathOptions={{ 
+                color: themeAccentBurgundy, 
+                fillColor: themeAccentBurgundy, 
+                fillOpacity: 1,
+                weight: 3,
+                opacity: 1
+              }}
+            >
+              <Popup>
+                <div style={{ 
+                  color: 'var(--color-text-primary)', 
+                  fontFamily: 'var(--font-family-sans)',
+                  textAlign: 'center'
+                }}>
+                  <strong style={{ color: 'var(--color-accent-burgundy)' }}>📍 Your Location</strong>
+                  <br />
+                  <small style={{ color: 'var(--color-text-secondary)' }}>
+                    {userLocation[0].toFixed(4)}, {userLocation[1].toFixed(4)}
+                  </small>
+                </div>
+              </Popup>
+            </CircleMarker>
+          </>
+        )}
+
         <LayersControl position="topright">
           <LayersControl.BaseLayer checked name="OpenStreetMap">
             <TileLayer
@@ -130,7 +237,7 @@ function ErraticsMap({ erratics: erraticsToDisplay }) {
           </LayersControl.BaseLayer>
         </LayersControl>
         
-        {/* Render erratics directly on map without layers control overlay */}
+        {/* Render erratics */}
         {erraticsToDisplay && erraticsToDisplay.map(erratic => {
           let markerIcon = defaultErraticIcon; // Default to custom icon
 

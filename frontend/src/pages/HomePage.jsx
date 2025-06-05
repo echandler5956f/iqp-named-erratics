@@ -4,6 +4,7 @@ import ErraticsMap from '../components/Map/ErraticsMap';
 import Header from '../components/Layout/Header';
 import FilterPanel from '../components/FilterSystem/FilterPanel';
 import { getVisibleErraticIds } from '../components/FilterSystem/filterUtils';
+import { solveTsp, calculatePathDistance } from '../services/tspService';
 import styles from './HomePage.module.css';
 
 // Updated filter definitions to match refactored backend schema
@@ -438,9 +439,67 @@ const GLOBAL_FILTER_DEFINITIONS = {
 
 function HomePage() {
   const [allErraticData, setAllErraticData] = useState([]);
+  // -------------------------
+  //  User-location & TSP state
+  // -------------------------
+  const [userLocation, setUserLocation] = useState(null);            // [lat, lng]
+  const [locationError, setLocationError] = useState(null);
+
+  const [isTspPathVisible, setIsTspPathVisible] = useState(false);
+  const [tspPath, setTspPath] = useState([]);                       // Array<[lat,lng]>
+  const [isCalculatingTsp, setIsCalculatingTsp] = useState(false);
+  const [tspDistanceKm, setTspDistanceKm] = useState(0);
+  const [isRequestingLocation, setIsRequestingLocation] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState([]);
+
+  // ------------------------------------------------------------
+  //  Acquire user location once on mount (high-accuracy attempt)
+  // ------------------------------------------------------------
+  // Helper: request geolocation with robust error handling
+  const requestUserLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation API not available in this browser.');
+      return;
+    }
+
+    setIsRequestingLocation(true);
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+        setLocationError(null);
+        setIsRequestingLocation(false);
+      },
+      (err) => {
+        let msg = err.message || 'Unable to retrieve location.';
+        if (err.code === 1) {
+          // Permission denied
+          msg = 'Location permission denied. Adjust browser site settings to enable.';
+        }
+        setLocationError(msg);
+        setIsRequestingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  };
+
+  // Request location once on mount if permission state is already granted
+  useEffect(() => {
+    if (!('permissions' in navigator)) {
+      // Fallback: try once
+      requestUserLocation();
+      return;
+    }
+    navigator.permissions.query({ name: 'geolocation' }).then((status) => {
+      if (status.state === 'granted') {
+        requestUserLocation();
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const fetchErratics = async () => {
@@ -670,6 +729,52 @@ function HomePage() {
     setFilters(newFilters);
   };
 
+  // ------------------------------------------------------------
+  //  Recompute TSP path whenever visibility/userLocation/toggle changes
+  // ------------------------------------------------------------
+  useEffect(() => {
+    const computeTsp = async () => {
+      if (!isTspPathVisible) {
+        setTspPath([]);
+        setTspDistanceKm(0);
+        return;
+      }
+
+      // Build node list: user first (if available) + visible erratics
+      const nodes = [];
+      if (userLocation && Array.isArray(userLocation)) {
+        nodes.push({ id: 'user', lat: userLocation[0], lng: userLocation[1], name: 'You' });
+      }
+
+      erraticsToDisplay.forEach((e) => {
+        if (e.location && Array.isArray(e.location.coordinates) && e.location.coordinates.length === 2) {
+          nodes.push({ id: e.id, lat: e.location.coordinates[1], lng: e.location.coordinates[0], name: e.name });
+        }
+      });
+
+      if (nodes.length < 2) {
+        setTspPath([]);
+        setTspDistanceKm(0);
+        return;
+      }
+
+      setIsCalculatingTsp(true);
+      try {
+        const ordered = await solveTsp(nodes);
+        setTspPath(ordered.map((p) => [p.lat, p.lng]));
+        setTspDistanceKm(calculatePathDistance(ordered));
+      } catch (err) {
+        console.error('TSP calculation failed:', err);
+        setTspPath([]);
+        setTspDistanceKm(0);
+      } finally {
+        setIsCalculatingTsp(false);
+      }
+    };
+
+    computeTsp();
+  }, [isTspPathVisible, erraticsToDisplay, userLocation]);
+
   return (
     <div className={styles.homePage}>
       <Header />
@@ -682,6 +787,139 @@ function HomePage() {
           />
         </div>
         <div className={styles.mapContainer}>
+          {/* TSP Route Controls */}
+          <div style={{ 
+            position: 'absolute', 
+            top: 'var(--spacing-3)', 
+            left: 'var(--spacing-3)', 
+            display: 'flex', 
+            gap: 'var(--spacing-3)', 
+            alignItems: 'center',
+            background: 'linear-gradient(135deg, var(--color-bg-secondary), var(--color-bg-tertiary))',
+            padding: 'var(--spacing-3) var(--spacing-4)',
+            borderRadius: 'var(--radius-lg)',
+            border: 'var(--border-width-1) solid var(--color-neutral-600)',
+            boxShadow: 'var(--shadow-xl)',
+            backdropFilter: 'blur(12px)',
+            zIndex: 'var(--z-index-overlay)',
+            pointerEvents: 'auto',
+            color: 'var(--color-text-primary)',
+            fontFamily: 'var(--font-family-sans)',
+            fontSize: 'var(--font-size-sm)',
+            fontWeight: 'var(--font-weight-medium)',
+            width: 'auto', 
+            height: 'auto',
+            minWidth: '320px'
+          }}>
+            <label style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 'var(--spacing-2)',
+              cursor: 'pointer',
+              color: 'var(--color-text-secondary)',
+              transition: 'var(--transition-colors)'
+            }}>
+              <input
+                type="checkbox"
+                checked={isTspPathVisible}
+                onChange={(e) => setIsTspPathVisible(e.target.checked)}
+                style={{
+                  accentColor: 'var(--color-primary-500)',
+                  width: '16px',
+                  height: '16px'
+                }}
+              />
+              <span>Show Optimal Route</span>
+            </label>
+            <button
+              style={{ 
+                padding: 'var(--spacing-2) var(--spacing-3)', 
+                cursor: 'pointer', 
+                borderRadius: 'var(--radius-md)', 
+                border: 'var(--border-width-1) solid var(--color-primary-600)', 
+                background: 'linear-gradient(135deg, var(--color-primary-600), var(--color-primary-700))',
+                color: 'var(--color-text-primary)',
+                fontSize: 'var(--font-size-xs)',
+                fontWeight: 'var(--font-weight-medium)',
+                fontFamily: 'var(--font-family-sans)',
+                transition: 'var(--transition-all)',
+                boxShadow: 'var(--shadow-sm)',
+                minWidth: '80px'
+              }}
+              onClick={requestUserLocation}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'linear-gradient(135deg, var(--color-primary-700), var(--color-primary-800))';
+                e.target.style.transform = 'translateY(-1px)';
+                e.target.style.boxShadow = 'var(--shadow-md)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'linear-gradient(135deg, var(--color-primary-600), var(--color-primary-700))';
+                e.target.style.transform = 'translateY(0)';
+                e.target.style.boxShadow = 'var(--shadow-sm)';
+              }}
+            >
+              {isRequestingLocation ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-1)' }}>
+                  <span style={{ 
+                    display: 'inline-block',
+                    width: '12px',
+                    height: '12px',
+                    border: '2px solid var(--color-text-primary)',
+                    borderRadius: '50%',
+                    borderTopColor: 'transparent',
+                    animation: 'spin 1s linear infinite'
+                  }}></span>
+                  Locating…
+                </span>
+              ) : '📍 Locate Me'}
+            </button>
+            {isTspPathVisible && isCalculatingTsp && (
+              <span style={{ 
+                color: 'var(--color-text-muted)', 
+                fontSize: 'var(--font-size-xs)',
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 'var(--spacing-2)'
+              }}>
+                <span style={{ 
+                  display: 'inline-block',
+                  width: '14px',
+                  height: '14px',
+                  border: '2px solid var(--color-primary-500)',
+                  borderRadius: '50%',
+                  borderTopColor: 'transparent',
+                  animation: 'spin 1s linear infinite'
+                }}></span>
+                Calculating route…
+              </span>
+            )}
+            {isTspPathVisible && !isCalculatingTsp && tspPath.length > 1 && (
+              <span style={{ 
+                fontWeight: 'var(--font-weight-semibold)',
+                color: 'var(--color-accent-gold)',
+                fontSize: 'var(--font-size-sm)',
+                padding: 'var(--spacing-1) var(--spacing-2)',
+                background: 'var(--color-bg-primary)',
+                borderRadius: 'var(--radius-md)',
+                border: 'var(--border-width-1) solid var(--color-neutral-600)'
+              }}>
+                🛣️ {tspDistanceKm.toFixed(2)} km
+              </span>
+            )}
+            {locationError && (
+              <span style={{ 
+                color: 'var(--color-error-300)', 
+                maxWidth: '200px',
+                fontSize: 'var(--font-size-xs)',
+                padding: 'var(--spacing-1) var(--spacing-2)',
+                background: 'var(--color-error-950)',
+                borderRadius: 'var(--radius-md)',
+                border: 'var(--border-width-1) solid var(--color-error-600)'
+              }}>
+                ⚠️ {locationError}
+              </span>
+            )}
+          </div>
           {isLoading && (
             <div className={styles.loadingText}>
               Loading geological survey data...
@@ -695,6 +933,8 @@ function HomePage() {
           {!isLoading && !error && Array.isArray(allErraticData) && (
             <ErraticsMap 
               erratics={erraticsToDisplay} 
+              userLocation={userLocation}
+              tspPath={tspPath}
             />
           )}
           {!isLoading && !error && Array.isArray(allErraticData) && allErraticData.length > 0 && erraticsToDisplay.length === 0 && activeFilters.length > 0 && (
