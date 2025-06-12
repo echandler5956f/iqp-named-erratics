@@ -236,7 +236,7 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
             />
           </LayersControl.BaseLayer>
         </LayersControl>
-        
+
         {/* Render erratics */}
         {erraticsToDisplay && erraticsToDisplay.map(erratic => {
           let markerIcon = defaultErraticIcon; // Default to custom icon
@@ -297,13 +297,13 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
                     />
                   )}
                   <div className="erratic-details">
-                    {erratic.rock_type && <p><strong>Rock Type:</strong> {erratic.rock_type}</p>}
-                    {erratic.size_meters && <p><strong>Size:</strong> {erratic.size_meters} meters</p>}
-                    {erratic.elevation && <p><strong>Elevation:</strong> {erratic.elevation} meters</p>}
-                    {erratic.estimated_age && <p><strong>Age:</strong> {erratic.estimated_age}</p>}
+                    {erratic.rock_type && <p><strong>Rock Type: </strong> {erratic.rock_type}</p>}
+                    {erratic.size_meters && <p><strong>Size: </strong> {erratic.size_meters} meters</p>}
+                    {erratic.elevation && <p><strong>Elevation: </strong> {erratic.elevation} meters</p>}
+                    {erratic.estimated_age && <p><strong>Age: </strong> {erratic.estimated_age}</p>}
                     {/* Removed short description from popup; full details in sidebar */}
                     {userLocation && erratic.location && erratic.location.coordinates && (
-                        <p><strong>Distance:</strong> 
+                        <p><strong>Distance: </strong> 
                         { (L.latLng(userLocation).distanceTo(L.latLng(erratic.location.coordinates[1], erratic.location.coordinates[0])) / 1000).toFixed(1) } km
                         </p>
                     )}
