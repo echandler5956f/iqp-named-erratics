@@ -124,6 +124,25 @@ def load_erratic_details_by_id(erratic_id: int) -> Optional[Dict]:
     finally:
         if conn: conn.close()
 
+def update_erratic_elevation(erratic_id: int, new_elevation: float) -> bool:
+    """Updates the elevation for a specific erratic in the Erratics table."""
+    if new_elevation is None:
+        return False
+    logger.info(f"Updating elevation for erratic ID {erratic_id} to {new_elevation:.2f}m.")
+    conn = None
+    try:
+        conn = get_db_connection(autocommit=True)
+        with conn.cursor() as cursor:
+            sql = 'UPDATE "Erratics" SET "elevation" = %s, "updatedAt" = NOW() WHERE "id" = %s;'
+            cursor.execute(sql, (new_elevation, erratic_id))
+            return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error updating elevation for erratic ID {erratic_id}: {e}", exc_info=True)
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 def update_erratic_analysis_results(erratic_id: int, analysis_data: Dict[str, Any]) -> bool:
     """Update or insert analysis results for an erratic in the ErraticAnalyses table."""
     logger.info(f"Updating analysis results for erratic ID: {erratic_id}")

@@ -33,6 +33,7 @@ if PYTHON_SCRIPTS_DIR not in sys.path:
 import data_pipeline.data_sources  # Explicitly import to trigger registration (same pattern as geo_utils)
 from data_pipeline import load_data # Main entry point for new data pipeline
 from utils import db_utils
+from utils.db_utils import update_erratic_elevation
 from utils import file_utils
 from utils import geo_utils # Uses refactored load_dem_data
 from utils.geo_utils import Point # Ensure Point class is available
@@ -433,6 +434,8 @@ def _calculate_terrain_and_context(erratic_point: Point, erratic_db_data: Dict, 
             if point_elevation_from_dem is not None:
                 results['elevation_dem'] = point_elevation_from_dem
                 results['elevation_category'] = geo_utils.get_elevation_category(point_elevation_from_dem) # Override with DEM based
+                # Update the main Erratics table with the accurate elevation from the DEM
+                update_erratic_elevation(erratic_id_for_log, point_elevation_from_dem)
             else:
                 logger.debug(f"Could not retrieve DEM elevation for erratic ID {erratic_id_for_log}")
 
