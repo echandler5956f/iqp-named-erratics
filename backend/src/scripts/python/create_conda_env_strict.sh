@@ -332,5 +332,6 @@ print('\nBasic environment check ' + ('passed' if all_good else 'failed'))
 "
 fi
 
+echo -e "\nEnvironment setup complete."
 echo -e "\nTo fix issues in this environment, run again with -f flag:"
 echo "./create_conda_env_strict.sh -f" 
