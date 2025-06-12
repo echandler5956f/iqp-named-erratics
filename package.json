@@ -10,7 +10,7 @@
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
-    "db:migrate:undo:all": "npx sequelize-cli db:migrate:undo:all",
+    "db:migrate:undo:all": "npx sequelize-cli db:migrate:undo:all"
   },
   "keywords": ["glacial", "erratics", "map", "gis"],
   "author": "",
