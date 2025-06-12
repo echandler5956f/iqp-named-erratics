@@ -91,16 +91,19 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     image_url: {
-      type: DataTypes.STRING,
+      type: DataTypes.TEXT,
       allowNull: true,
       validate: {
         isUrlOrEmpty(value) {
           if (value === null || value === '' || value === undefined) {
             return; // Allow empty or null
           }
-          if (!DataTypes.STRING.prototype.options.validate.isUrl(value)) {
-            throw new Error('Image URL must be a valid URL.');
+          // Basic URL validation, since validator.js's isUrl is too strict
+          // and we can't easily pass options to it in this context.
+          if (typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'))) {
+            return;
           }
+          throw new Error('Image URL must be a valid URL.');
         }
       }
     }
