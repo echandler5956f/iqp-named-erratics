@@ -36,6 +36,15 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// In production, serve static files from the frontend build
+if (process.env.NODE_ENV === 'production') {
+  // Serve static files from the frontend build directory
+  const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
+  app.use(express.static(frontendBuildPath));
+  
+  logger.info(`Serving static files from: ${frontendBuildPath}`);
+}
+
 // Routes
 app.use('/api/erratics', erraticRoutes);
 app.use('/api/auth', authRoutes);
@@ -83,8 +92,9 @@ app.get('/', (req, res) => {
       </html>
     `);
   } else {
-    // In production, we could serve the static frontend files here
-    res.redirect('/api/health');
+    // In production, serve the React app
+    const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
   }
 });
 
@@ -93,6 +103,14 @@ app.use('/api/*', (req, res) => {
   logger.warn(`404 - API endpoint not found: ${req.originalUrl}`);
   res.status(404).json({ message: 'API endpoint not found' });
 });
+
+// In production, handle client-side routing for React Router
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req, res) => {
+    const frontendBuildPath = path.join(__dirname, '../../frontend/dist');
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
+  });
+}
 
 // Global error handler (basic example)
 app.use((err, req, res, next) => {

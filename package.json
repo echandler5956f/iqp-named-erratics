@@ -8,6 +8,9 @@
     "start:backend": "cd backend && npm run dev",
     "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "build": "cd frontend && npm run build",
+    "build:all": "npm run install:all && npm run build",
+    "start:prod": "cd backend && npm start",
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
     "db:migrate:undo:all": "npx sequelize-cli db:migrate:undo:all"
