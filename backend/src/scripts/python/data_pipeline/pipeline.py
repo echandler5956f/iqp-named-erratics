@@ -57,6 +57,16 @@ class DataPipeline:
         if not source:
             raise ValueError(f"Unknown data source: {source_name}")
         
+        # Tiled data sources are not loaded in their entirety by the standard pipeline.
+        # They are accessed tile-by-tile via helper functions.
+        # If a full load is requested, log it and return None to signal it was skipped.
+        if source.is_tiled:
+            logger.debug(
+                f"Source '{source_name}' is a tiled dataset. "
+                "A full load is not supported via this method and will be skipped."
+            )
+            return None
+        
         # Extract runtime hints (not part of cache key!)
         runtime_bbox = kwargs.pop('bbox', None)
         runtime_keep_cols = kwargs.pop('keep_cols', None)

@@ -343,7 +343,7 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
               
               { /* --- Analysis Fields --- */ }
               { typeof selectedErratic.accessibility_score === 'number' && (
-                <div className="detail-section"><h3>Accessibility Score</h3><p>{selectedErratic.accessibility_score} / 5</p></div>
+                <div className="detail-section"><h3>Accessibility Score</h3><p>{selectedErratic.accessibility_score} / 10</p></div>
               )}
               { selectedErratic.terrain_landform && (
                 <div className="detail-section"><h3>Terrain Landform</h3><p>{selectedErratic.terrain_landform}</p></div>

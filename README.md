@@ -248,7 +248,7 @@ The frontend (`HomePage.jsx`) implements a dynamic filtering system allowing use
     -   Rock Type (select from distinct `rock_type` values)
     -   Usage Type (select from distinct `usage_type` tags from `ErraticAnalysis`)
     -   Has Inscriptions (boolean `has_inscriptions` from `ErraticAnalysis`)
-    -   Accessibility Score (min/max `accessibility_score` from `ErraticAnalysis`, typically 1-5)
+    -   Accessibility Score (min/max `accessibility_score` from `ErraticAnalysis`, 1-10)
     -   Terrain Landform (select from distinct `terrain_landform` values from `ErraticAnalysis`)
     -   Proximity to NATD Road (max `nearest_natd_road_dist` from `ErraticAnalysis`)
     -   Proximity to Forest Trail (max `nearest_forest_trail_dist` from `ErraticAnalysis`)

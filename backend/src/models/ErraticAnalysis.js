@@ -52,8 +52,8 @@ module.exports = (sequelize, DataTypes) => {
           msg: 'Accessibility score must be at least 1.'
         },
         max: {
-          args: [5], // Assuming a 1-5 scale
-          msg: 'Accessibility score cannot exceed 5.'
+          args: [10], // 1-10 scale
+          msg: 'Accessibility score cannot exceed 10.'
         }
       }
     },

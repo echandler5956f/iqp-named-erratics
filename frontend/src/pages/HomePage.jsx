@@ -166,7 +166,7 @@ const GLOBAL_FILTER_DEFINITIONS = {
     ),
   },
   accessibility_score: {
-    label: 'Accessibility Score (1-5)',
+    label: 'Accessibility Score (1-10)',
     defaultConfig: { min: null, max: null },
     Component: ({ config, onChange, styles: panelStyles }) => (
       <div className={panelStyles.filterConfigRow}>
@@ -174,19 +174,19 @@ const GLOBAL_FILTER_DEFINITIONS = {
         <input
           type="number"
           id="minAccessibility"
-          min="1" max="5"
+          min="1" max="10"
           value={config.min ?? ''}
           onChange={(e) => onChange({ ...config, min: e.target.value ? parseInt(e.target.value, 10) : null })}
-          placeholder="1-5"
+          placeholder="1-10"
         />
         <label htmlFor="maxAccessibility">Max:</label>
         <input
           type="number"
           id="maxAccessibility"
-          min="1" max="5"
+          min="1" max="10"
           value={config.max ?? ''}
           onChange={(e) => onChange({ ...config, max: e.target.value ? parseInt(e.target.value, 10) : null })}
-          placeholder="1-5"
+          placeholder="1-10"
         />
       </div>
     ),

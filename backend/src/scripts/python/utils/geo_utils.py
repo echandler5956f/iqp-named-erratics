@@ -180,21 +180,21 @@ def categorize_elevation(elevation: float) -> str:
         Elevation category as string
     """
     if elevation < 0:
-        return "below_sea_level"
+        return "Below Sea Level"
     elif elevation < 200:
-        return "lowland"
+        return "Lowland"
     elif elevation < 500:
-        return "upland"
+        return "Upland"
     elif elevation < 1000:
-        return "hill"
+        return "Hill"
     elif elevation < 2000:
-        return "low_mountain"
+        return "Low Mountain"
     elif elevation < 3000:
-        return "mid_mountain"
+        return "Mid Mountain"
     elif elevation < 5000:
-        return "high_mountain"
+        return "High Mountain"
     else:
-        return "extreme_elevation"
+        return "Extreme Elevation"
 
 def get_elevation_category(elevation: float) -> str:
     """
