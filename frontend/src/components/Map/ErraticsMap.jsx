@@ -3,6 +3,10 @@ import { MapContainer, TileLayer, Marker, Popup, LayersControl, ZoomControl, Pol
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './ErraticsMap.css';
+import MapLayerControl from './MapLayerControl';
+import GlacialFlowLayer from './GlacialFlowLayer';
+import GeologicalVoronoiLayer from './GeologicalVoronoiLayer';
+import UncertaintyVisualizationLayer from './UncertaintyVisualizationLayer';
 
 // Fix the default icon issue in React-Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -22,15 +26,258 @@ const defaultErraticIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
-// Custom erratic icon
-// const erraticIcon = new L.Icon({
-//   iconUrl: '/erratic-icon.png',
-//   iconSize: [25, 41],
-//   iconAnchor: [12, 41],
-//   popupAnchor: [1, -34],
-//   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-//   shadowSize: [41, 41]
-// });
+// Utility function to create circular, vignetted erratic icons
+const createCircularVignettedIcon = (imageUrl, size = 32) => {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    // Set canvas size
+    canvas.width = size;
+    canvas.height = size;
+    
+    // Timeout for loading images
+    const timeout = setTimeout(() => {
+      console.warn(`Image load timeout for: ${imageUrl}`);
+      reject(new Error('Image load timeout'));
+    }, 10000); // 10 second timeout
+    
+    img.onload = () => {
+      clearTimeout(timeout);
+      try {
+        // Validate image dimensions
+        if (img.width === 0 || img.height === 0) {
+          console.warn(`Invalid image dimensions for: ${imageUrl}`);
+          reject(new Error('Invalid image dimensions'));
+          return;
+        }
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, size, size);
+        
+        // Create circular clipping path
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+        ctx.clip();
+        
+        // Draw the image to fill the circle
+        const aspectRatio = img.width / img.height;
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        if (aspectRatio > 1) {
+          // Image is wider than tall
+          drawHeight = size;
+          drawWidth = size * aspectRatio;
+          drawX = -(drawWidth - size) / 2;
+          drawY = 0;
+        } else {
+          // Image is taller than wide
+          drawWidth = size;
+          drawHeight = size / aspectRatio;
+          drawX = 0;
+          drawY = -(drawHeight - size) / 2;
+        }
+        
+        ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        ctx.restore();
+        
+        // Apply subtle vignette effect
+        const gradient = ctx.createRadialGradient(
+          size / 2, size / 2, 0,
+          size / 2, size / 2, size / 2
+        );
+        gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, size, size);
+        
+        // Add subtle border
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2 - 1, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Try to convert canvas to data URL, handle tainted canvas
+        let dataUrl;
+        try {
+          dataUrl = canvas.toDataURL('image/png');
+        } catch (securityError) {
+          // Canvas is tainted, we can't export it
+          // Fall back to using the original image with a CSS-based circular mask
+          console.warn(`Canvas tainted for ${imageUrl}, using CSS fallback`);
+          
+          // Create a CSS-masked icon instead
+          const icon = new L.DivIcon({
+            html: `<div style="
+              width: ${size}px;
+              height: ${size}px;
+              background-image: url('${imageUrl}');
+              background-size: cover;
+              background-position: center;
+              border-radius: 50%;
+              border: 2px solid rgba(255, 255, 255, 0.8);
+              box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+            "></div>`,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
+            popupAnchor: [0, -size / 2],
+            className: 'circular-erratic-icon-css'
+          });
+          
+          console.log(`Successfully created CSS circular icon for: ${imageUrl}`);
+          resolve(icon);
+          return;
+        }
+        
+        // Create Leaflet icon with canvas data
+        const icon = new L.Icon({
+          iconUrl: dataUrl,
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+          popupAnchor: [0, -size / 2],
+          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+          shadowSize: [size * 1.2, size * 0.8],
+          shadowAnchor: [size * 0.6, size * 0.4]
+        });
+        
+        console.log(`Successfully created circular icon for: ${imageUrl}`);
+        resolve(icon);
+      } catch (error) {
+        clearTimeout(timeout);
+        console.error(`Canvas processing error for ${imageUrl}:`, error);
+        reject(error);
+      }
+    };
+    
+    img.onerror = (error) => {
+      clearTimeout(timeout);
+      console.warn(`Failed to load image: ${imageUrl}`, error);
+      reject(new Error(`Failed to load image: ${imageUrl}`));
+    };
+    
+    // Try loading with CORS first, then without
+    const attemptLoad = (useCors) => {
+      if (useCors) {
+        img.crossOrigin = 'anonymous';
+      } else {
+        img.crossOrigin = null;
+      }
+      img.src = imageUrl;
+    };
+
+    // Start with CORS attempt
+    let corsAttempted = false;
+    
+    const originalOnError = img.onerror;
+    img.onerror = (error) => {
+      if (!corsAttempted) {
+        corsAttempted = true;
+        console.warn(`CORS load failed for ${imageUrl}, trying without CORS`);
+        // Try again without CORS
+        attemptLoad(false);
+      } else {
+        // Both attempts failed
+        originalOnError(error);
+      }
+    };
+
+    // Start with CORS
+    attemptLoad(true);
+  });
+};
+
+// Cache for processed icons to avoid reprocessing
+const iconCache = new Map();
+
+// Function to validate image URL
+const isValidImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  
+  // Check if it's a valid HTTP/HTTPS URL
+  try {
+    const urlObj = new URL(url);
+    if (!['http:', 'https:'].includes(urlObj.protocol)) return false;
+  } catch {
+    return false;
+  }
+  
+  // Check for common image extensions in the URL path or query params
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+  const lowercaseUrl = url.toLowerCase();
+  const hasImageExtension = imageExtensions.some(ext => lowercaseUrl.includes(ext));
+  
+  // Check for common image hosting patterns and services
+  const imageHostPatterns = [
+    'imgur.com',
+    'flickr.com',
+    'wikimedia.org',
+    'wikipedia.org',
+    'googleusercontent.com',
+    'amazonaws.com',
+    'bing.com/th/id', // Bing image service
+    'geocaching.com',
+    'photoshelter.com',
+    'staticflickr.com',
+    'istockphoto.com',
+    'shutterstock.com',
+    'alamy.com',
+    'gettyimages.com',
+    'pinimg.com', // Pinterest images
+    'ytimg.com', // YouTube thumbnails
+    'blogspot.com',
+    'wordpress.com',
+    'squarespace-cdn.com',
+    'fineartamerica.com',
+    'kiddle.co',
+    'naturallyamazing.com',
+    'newengland.com',
+    'oceanlight.com',
+    'wanderer.com',
+    'njhiking.com',
+    'blockislandguide.com',
+    'berkeleyca.gov',
+    'smokymountains.com',
+    'wsu.edu',
+    'bidsquare.com',
+    'producer.com',
+    'editorial01.shutterstock.com'
+  ];
+  const hasImageHost = imageHostPatterns.some(pattern => lowercaseUrl.includes(pattern));
+  
+  // If it has an image extension or is from a known image host, it's likely valid
+  // Also accept URLs that look like they might be images even without explicit extensions
+  return hasImageExtension || hasImageHost || lowercaseUrl.includes('image') || lowercaseUrl.includes('photo');
+};
+
+// Function to get or create a circular vignetted icon
+const getCircularIcon = async (imageUrl) => {
+  if (iconCache.has(imageUrl)) {
+    return iconCache.get(imageUrl);
+  }
+  
+  // Validate URL first
+  if (!isValidImageUrl(imageUrl)) {
+    console.warn('Invalid image URL format:', imageUrl);
+    iconCache.set(imageUrl, defaultErraticIcon);
+    return defaultErraticIcon;
+  }
+  
+  try {
+    const icon = await createCircularVignettedIcon(imageUrl, 32);
+    iconCache.set(imageUrl, icon);
+    return icon;
+  } catch (error) {
+    console.warn('Failed to create circular icon for:', imageUrl, error);
+    // Cache the failure to avoid retrying
+    iconCache.set(imageUrl, defaultErraticIcon);
+    return defaultErraticIcon;
+  }
+};
 
 // ------------------------------------------------------------
 //  Map helper – fit bounds to path & user location
@@ -55,6 +302,24 @@ const FitBoundsToPath = ({ path, userLocation }) => {
 
 function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
   const [selectedErratic, setSelectedErratic] = useState(null);
+  const [currentBaseLayer, setCurrentBaseLayer] = useState('osm');
+  const [overlayLayers, setOverlayLayers] = useState({
+    glacialFlow: false,
+    geologicalTerritories: false,
+    uncertaintyVisualization: false
+  });
+  const [erraticIcons, setErraticIcons] = useState(new Map());
+
+  const handleBaseLayerChange = (layerId) => {
+    setCurrentBaseLayer(layerId);
+  };
+
+  const handleOverlayToggle = (layerId, enabled) => {
+    setOverlayLayers(prev => ({
+      ...prev,
+      [layerId]: enabled
+    }));
+  };
 
   const mapCenter = useMemo(() => {
     if (erraticsToDisplay && erraticsToDisplay.length > 0) {
@@ -96,8 +361,78 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
   }, [selectedErratic]); // Re-run effect when selectedErratic changes
   // --- End ESC Key Handler ---
 
+  // --- Preload Circular Icons ---
+  useEffect(() => {
+    if (!erraticsToDisplay) return;
+
+    const loadIcons = async () => {
+      const newIcons = new Map(erraticIcons);
+      let iconsProcessed = 0;
+      let iconsSuccessful = 0;
+      let iconsFailed = 0;
+      
+      console.log(`Starting to process ${erraticsToDisplay.length} erratic icons...`);
+      
+      // Process icons in batches to avoid overwhelming the browser
+      const batchSize = 5;
+      for (let i = 0; i < erraticsToDisplay.length; i += batchSize) {
+        const batch = erraticsToDisplay.slice(i, i + batchSize);
+        
+        await Promise.allSettled(
+          batch.map(async (erratic) => {
+            if (newIcons.has(erratic.id)) {
+              return; // Already processed
+            }
+            
+            iconsProcessed++;
+            
+            if (erratic.image_url && 
+                typeof erratic.image_url === 'string' && 
+                erratic.image_url.startsWith('http')) {
+              
+              try {
+                console.log(`Processing icon ${iconsProcessed}/${erraticsToDisplay.length}: ${erratic.name}`);
+                const circularIcon = await getCircularIcon(erratic.image_url);
+                newIcons.set(erratic.id, circularIcon);
+                iconsSuccessful++;
+              } catch (error) {
+                console.warn(`Failed to create circular icon for erratic ${erratic.id} (${erratic.name}):`, error);
+                newIcons.set(erratic.id, defaultErraticIcon);
+                iconsFailed++;
+              }
+            } else {
+              // No image URL or invalid format
+              newIcons.set(erratic.id, defaultErraticIcon);
+            }
+          })
+        );
+        
+        // Update state after each batch
+        setErraticIcons(new Map(newIcons));
+        
+        // Small delay between batches to prevent browser freezing
+        if (i + batchSize < erraticsToDisplay.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      console.log(`Icon processing complete: ${iconsSuccessful} successful, ${iconsFailed} failed, ${iconsProcessed} total`);
+    };
+
+    loadIcons();
+  }, [erraticsToDisplay]);
+  // --- End Icon Preloading ---
+
   return (
     <div className="map-container">
+      {/* Unified Map Layer Control */}
+      <MapLayerControl 
+        currentBaseLayer={currentBaseLayer}
+        onBaseLayerChange={handleBaseLayerChange}
+        overlayLayers={overlayLayers}
+        onOverlayToggle={handleOverlayToggle}
+      />
+      
       <MapContainer
         key={mapCenter.join('-') + '-' + (erraticsToDisplay ? erraticsToDisplay.length : 0)}
         center={mapCenter}
@@ -213,57 +548,45 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
           </>
         )}
 
-        <LayersControl position="topright">
-          <LayersControl.BaseLayer checked name="OpenStreetMap">
+        {/* Base Layer - controlled by our unified control */}
+        {currentBaseLayer === 'osm' && (
             <TileLayer
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution=""
             />
-          </LayersControl.BaseLayer>
-          
-          <LayersControl.BaseLayer name="Satellite">
+        )}
+        {currentBaseLayer === 'satellite' && (
             <TileLayer
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
               attribution=""
             />
-          </LayersControl.BaseLayer>
-          
-          <LayersControl.BaseLayer name="Topographic">
+        )}
+        {currentBaseLayer === 'topographic' && (
             <TileLayer
               url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
               attribution=""
               maxZoom={17}
             />
-          </LayersControl.BaseLayer>
-        </LayersControl>
+        )}
 
-        {/* Render erratics */}
+        {/* Visualization Layers */}
+        <GlacialFlowLayer 
+          erratics={erraticsToDisplay}
+          isVisible={overlayLayers.glacialFlow}
+        />
+        <GeologicalVoronoiLayer 
+          erratics={erraticsToDisplay}
+          isVisible={overlayLayers.geologicalTerritories}
+        />
+        <UncertaintyVisualizationLayer 
+          erratics={erraticsToDisplay}
+          isVisible={overlayLayers.uncertaintyVisualization}
+        />
+
+        {/* Render erratics with circular, vignetted icons */}
         {erraticsToDisplay && erraticsToDisplay.map(erratic => {
-          let markerIcon = defaultErraticIcon; // Default to custom icon
-
-          if (erratic.image_url) {
-            try {
-              // Attempt to create an icon from the erratic's image_url
-              // Basic validation: check if it's a string and looks like a URL (very basic check)
-              if (typeof erratic.image_url === 'string' && erratic.image_url.startsWith('http')) {
-                markerIcon = new L.Icon({
-                  iconUrl: erratic.image_url,
-                  iconSize: [25, 41],
-                  iconAnchor: [12, 41],
-                  popupAnchor: [1, -34],
-                  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-                  shadowSize: [41, 41]
-                });
-              } else if (typeof erratic.image_url === 'string' && erratic.image_url) {
-                // If it's a string but not a full URL, it might be a local path, but less safe
-                // For now, only http/https URLs are used for per-erratic icons to avoid issues
-                // console.warn(`Erratic ${erratic.id} has an image_url that is not a full URL: ${erratic.image_url}. Using default icon.`);
-              }
-            } catch (e) {
-              console.warn(`Error creating icon for erratic ${erratic.id} with image_url: ${erratic.image_url}`, e);
-              // Fallback to defaultErraticIcon is already handled by initial assignment
-            }
-          }
+          // Get the preloaded circular icon or use default
+          const markerIcon = erraticIcons.get(erratic.id) || defaultErraticIcon;
 
           if (!erratic.location || !erratic.location.coordinates || erratic.location.coordinates.length < 2) {
             console.warn('Erratic with missing or invalid location:', erratic.id, erratic.name);
@@ -277,7 +600,7 @@ function ErraticsMap({ erratics: erraticsToDisplay, userLocation, tspPath }) {
                 erratic.location.coordinates[1], 
                 erratic.location.coordinates[0]
               ]}
-              icon={markerIcon} // This should always be a valid L.Icon instance now
+              icon={markerIcon}
               eventHandlers={{
                 click: () => {
                   setSelectedErratic(erratic);

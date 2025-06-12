@@ -1,0 +1,219 @@
+.uncertainty-legend {
+  position: fixed;
+  bottom: 80px;
+  left: 30px;
+  background: rgba(44, 62, 80, 0.95);
+  border: 2px solid #34495e;
+  border-radius: 8px;
+  padding: 16px;
+  max-width: 320px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #ecf0f1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.uncertainty-legend-header {
+  margin-bottom: 16px;
+  border-bottom: 1px solid #34495e;
+  padding-bottom: 12px;
+}
+
+.uncertainty-legend-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #3498db;
+}
+
+.uncertainty-legend-header p {
+  margin: 0;
+  font-size: 12px;
+  color: #bdc3c7;
+  font-style: italic;
+}
+
+.uncertainty-legend-content {
+  /* Removed max-height and overflow to show all content */
+}
+
+.legend-section {
+  margin-bottom: 16px;
+}
+
+.legend-section:last-child {
+  margin-bottom: 0;
+}
+
+.legend-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e67e22;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 10px;
+}
+
+.legend-item:last-child {
+  margin-bottom: 0;
+}
+
+.legend-symbol {
+  width: 20px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.legend-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.legend-text strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ecf0f1;
+}
+
+.legend-text span {
+  font-size: 11px;
+  color: #95a5a6;
+  line-height: 1.3;
+}
+
+/* Knowledge Gap Symbols */
+.legend-symbol.knowledge-gap {
+  background: linear-gradient(45deg, #e74c3c 25%, transparent 25%, transparent 75%, #e74c3c 75%),
+              linear-gradient(45deg, #e74c3c 25%, transparent 25%, transparent 75%, #e74c3c 75%);
+  background-size: 4px 4px;
+  background-position: 0 0, 2px 2px;
+  background-color: #c0392b;
+  border: 1px solid #e74c3c;
+  opacity: 0.8;
+}
+
+/* Uncertainty Field Symbols */
+.legend-symbol.uncertainty-high {
+  background: #e74c3c;
+  border: 1px solid #e74c3c;
+  opacity: 0.8;
+}
+
+.legend-symbol.uncertainty-medium {
+  background: #f39c12;
+  border: 1px solid #f39c12;
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.legend-symbol.uncertainty-low {
+  background: #f1c40f;
+  border: 1px solid #f1c40f;
+  opacity: 0.4;
+  border-style: dashed;
+}
+
+/* Data Quality Symbols */
+.legend-symbol.quality-excellent {
+  background: #3498db;
+  border: 1px solid #3498db;
+}
+
+.legend-symbol.quality-good {
+  background: #27ae60;
+  border: 1px solid #27ae60;
+}
+
+.legend-symbol.quality-fair {
+  background: #f39c12;
+  border: 1px solid #f39c12;
+}
+
+.legend-symbol.quality-poor {
+  background: #e67e22;
+  border: 1px solid #e67e22;
+}
+
+.legend-symbol.quality-very-poor {
+  background: #e74c3c;
+  border: 1px solid #e74c3c;
+}
+
+/* Connection Line Symbols */
+.legend-symbol.connection-high,
+.legend-symbol.connection-medium,
+.legend-symbol.connection-low {
+  height: 3px;
+  border-radius: 1px;
+  position: relative;
+}
+
+.legend-symbol.connection-high {
+  background: #3498db;
+  border: none;
+}
+
+.legend-symbol.connection-medium {
+  background: #27ae60;
+  border: none;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #27ae60,
+    #27ae60 6px,
+    transparent 6px,
+    transparent 10px
+  );
+}
+
+/* Scrollbar Styling */
+.uncertainty-legend-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.uncertainty-legend-content::-webkit-scrollbar-track {
+  background: rgba(52, 73, 94, 0.3);
+  border-radius: 2px;
+}
+
+.uncertainty-legend-content::-webkit-scrollbar-thumb {
+  background: #34495e;
+  border-radius: 2px;
+}
+
+.uncertainty-legend-content::-webkit-scrollbar-thumb:hover {
+  background: #4a6741;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .uncertainty-legend {
+    bottom: 10px;
+    left: 10px;
+    max-width: 280px;
+    padding: 12px;
+  }
+  
+  .uncertainty-legend-header h3 {
+    font-size: 14px;
+  }
+  
+  .legend-text strong {
+    font-size: 11px;
+  }
+  
+  .legend-text span {
+    font-size: 10px;
+  }
+} 

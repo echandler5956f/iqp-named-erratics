@@ -1,0 +1,295 @@
+/* Map Layer Control - Dark Academic Styling */
+
+.map-layer-control {
+  position: absolute;
+  top: var(--spacing-4);
+  right: var(--spacing-4);
+  z-index: var(--z-index-dropdown);
+  font-family: var(--font-family-sans);
+}
+
+/* Unified control stays on the right side */
+.map-layer-control.unified-control {
+  /* Uses default right positioning */
+}
+
+/* Toggle Button */
+.layer-control-toggle {
+  width: 36px;
+  height: 36px;
+  background: var(--color-bg-secondary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-all);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+}
+
+.layer-control-toggle:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent-gold);
+  box-shadow: var(--shadow-xl);
+}
+
+.layer-control-toggle:focus {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
+.toggle-icon {
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+}
+
+/* Expanded Panel */
+.layer-control-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--spacing-2);
+  min-width: 280px;
+  background: var(--color-bg-secondary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  backdrop-filter: blur(12px);
+  padding: var(--spacing-4);
+  animation: slideInDown 0.2s ease-out;
+}
+
+.layer-control-panel::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  background: var(--color-bg-secondary);
+  border: var(--border-width-1) solid var(--color-neutral-600);
+  border-bottom: none;
+  border-right: none;
+  transform: rotate(45deg);
+}
+
+/* Arrow stays on the right for unified control */
+
+/* Layer Sections */
+.layer-section {
+  margin-bottom: var(--spacing-4);
+}
+
+.layer-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent-gold);
+  margin-bottom: var(--spacing-3);
+  padding-bottom: var(--spacing-2);
+  border-bottom: var(--border-width-1) solid var(--color-neutral-700);
+  font-family: var(--font-family-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.section-separator {
+  height: var(--border-width-1);
+  background: var(--color-neutral-600);
+  margin: var(--spacing-4) 0;
+  opacity: 0.6;
+}
+
+/* Layer Options */
+.layer-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.layer-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition-all);
+  border: var(--border-width-1) solid transparent;
+}
+
+.layer-option:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-neutral-600);
+}
+
+.layer-option input[type="radio"],
+.layer-option input[type="checkbox"] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary-500);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px; /* Align with first line of text */
+}
+
+.layer-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  flex: 1;
+}
+
+.layer-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-tight);
+}
+
+.layer-description {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-normal);
+}
+
+/* Selected State for Radio Buttons */
+.layer-option:has(input[type="radio"]:checked) {
+  background: var(--color-primary-950);
+  border-color: var(--color-primary-600);
+}
+
+.layer-option:has(input[type="radio"]:checked) .layer-name {
+  color: var(--color-primary-300);
+}
+
+/* Enabled State for Checkboxes */
+.layer-option:has(input[type="checkbox"]:checked) {
+  background: var(--color-secondary-950);
+  border-color: var(--color-secondary-600);
+}
+
+.layer-option:has(input[type="checkbox"]:checked) .layer-name {
+  color: var(--color-secondary-300);
+}
+
+/* Animation */
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive Design */
+@media screen and (max-width: 768px) {
+  .layer-control-panel {
+    min-width: 260px;
+    right: -10px; /* Slight offset to prevent edge cutoff */
+  }
+  
+  .layer-option {
+    padding: var(--spacing-2);
+  }
+  
+  .layer-name {
+    font-size: var(--font-size-xs);
+  }
+  
+  .layer-description {
+    font-size: 11px;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .map-layer-control {
+    top: var(--spacing-3);
+    right: var(--spacing-3);
+  }
+  
+  .layer-control-toggle {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .toggle-icon {
+    font-size: 14px;
+  }
+  
+  .layer-control-panel {
+    min-width: 240px;
+    right: -20px;
+  }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .layer-control-panel {
+    animation: none;
+  }
+  
+  .layer-control-toggle,
+  .layer-option {
+    transition: none;
+  }
+}
+
+/* Focus States */
+.layer-option:focus-within {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 1px;
+}
+
+.layer-option input:focus {
+  outline: none; /* Remove default focus since parent handles it */
+}
+
+/* Data Quality Notice */
+.data-quality-notice {
+  background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+  border: 1px solid #4a6741;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.data-quality-notice h4 {
+  color: #f39c12;
+  margin: 0 0 8px 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.data-quality-notice p {
+  color: #bdc3c7;
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.data-quality-notice ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #95a5a6;
+  font-size: 0.75rem;
+}
+
+.data-quality-notice li {
+  margin-bottom: 4px;
+  line-height: 1.3;
+} 

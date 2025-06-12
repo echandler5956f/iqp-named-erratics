@@ -26,6 +26,15 @@
   box-shadow: var(--shadow-xl);
   z-index: var(--z-index-docked);
   position: relative;
+  transition: var(--transition-all);
+}
+
+.filterPanelContainer.collapsed {
+  transform: translateX(-100%);
+  width: 0;
+  padding: 0;
+  border-right: none;
+  overflow: hidden;
 }
 
 .filterPanelContainer::before {

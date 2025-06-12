@@ -453,6 +453,7 @@ function HomePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState([]);
+  const [isFilterPanelCollapsed, setIsFilterPanelCollapsed] = useState(false);
 
   // ------------------------------------------------------------
   //  Acquire user location once on mount (high-accuracy attempt)
@@ -779,19 +780,32 @@ function HomePage() {
     <div className={styles.homePage}>
       <Header />
       <div className={styles.mainContent}>
-        <div className={styles.filterPanelContainer}>
+        <div className={`${styles.filterPanelContainer} ${isFilterPanelCollapsed ? styles.collapsed : ''}`}>
            <FilterPanel 
             filters={filters} 
             onFiltersChange={handleFiltersChange} 
             filterDefinitions={GLOBAL_FILTER_DEFINITIONS_WITH_DATA}
           />
         </div>
+        
+        {/* Collapse button - always visible */}
+        <button 
+          className={`${styles.filterCollapseButton} ${isFilterPanelCollapsed ? styles.collapsed : ''}`}
+          onClick={() => setIsFilterPanelCollapsed(!isFilterPanelCollapsed)}
+          aria-label={isFilterPanelCollapsed ? "Expand filters" : "Collapse filters"}
+          title={isFilterPanelCollapsed ? "Expand filters" : "Collapse filters"}
+        >
+          <span className={styles.collapseIcon}>
+            {isFilterPanelCollapsed ? '▶' : '◀'}
+          </span>
+        </button>
         <div className={styles.mapContainer}>
           {/* TSP Route Controls */}
           <div style={{ 
             position: 'absolute', 
             top: 'var(--spacing-3)', 
-            left: 'var(--spacing-3)', 
+            left: isFilterPanelCollapsed ? 'var(--spacing-3)' : '15px',
+            transition: 'var(--transition-all)', 
             display: 'flex', 
             gap: 'var(--spacing-3)', 
             alignItems: 'center',

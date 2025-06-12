@@ -511,4 +511,48 @@
 
 .leaflet-control-zoom a:last-child {
   border-bottom: none !important;
+}
+
+/* === CIRCULAR ERRATIC ICON STYLES === */
+
+/* CSS-based circular icons for CORS-blocked images */
+.circular-erratic-icon-css {
+  background: transparent !important;
+  border: none !important;
+}
+
+.circular-erratic-icon-css div {
+  position: relative;
+  overflow: hidden;
+  transition: var(--transition-all);
+}
+
+.circular-erratic-icon-css div::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(
+    circle at center,
+    transparent 60%,
+    rgba(0, 0, 0, 0.2) 100%
+  );
+  pointer-events: none;
+}
+
+.circular-erratic-icon-css:hover div {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Canvas-based circular icons */
+.circular-erratic-icon {
+  transition: var(--transition-all);
+}
+
+.circular-erratic-icon:hover {
+  transform: scale(1.1);
+  filter: brightness(1.1);
 } 
