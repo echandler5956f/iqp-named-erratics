@@ -62,37 +62,27 @@ This application provides an interactive map interface to explore named glacial 
 ## Setup & Installation
 
 ### Prerequisites
-- Node.js v20.19.0 and npm v10.8.2 (or compatible versions)
-- PostgreSQL 14+ with PostGIS extension enabled (`CREATE EXTENSION postgis;`)
-- **Python 3.10+**
-- **GDAL (with `ogr2ogr` command-line tool):** Needs to be installed on the system and accessible in the PATH.
-- **Python Packages:** Install via pip:
-  ```bash
-  pip install -r backend/src/scripts/python/requirements.txt
-  ```
-  This includes `geopandas`, `rasterio`, `scikit-learn`, `sentence-transformers`, `pytest`, etc.
-  - *Note:* Installing `geopandas` and `rasterio` can sometimes be complex. Using Conda is often recommended.
-  - Download spaCy models: `python -m spacy download en_core_web_md`
-  - Download NLTK data: Run python and execute `import nltk; nltk.download('stopwords'); nltk.download('wordnet'); nltk.download('punkt')`
+- Node.js v20.x and npm v10.x (or compatible versions)
+- PostgreSQL 14+ with PostGIS and pgvector extensions enabled
+- **Python 3.10+** with Conda
+- **GDAL (with `ogr2ogr` command-line tool)**
 
 ### Database Setup
 1. Create a PostgreSQL database (e.g., `glacial_erratics`).
 2. **Enable Extensions:** Connect to the database and run:
    ```sql
    CREATE EXTENSION IF NOT EXISTS postgis;
-   -- Optional but recommended for vector similarity search:
    CREATE EXTENSION IF NOT EXISTS vector; 
    ```
-3. Configure connection details in the `.env` file (in project root, copy from `.env.example` in `backend/` and move to root).
+3. Configure connection details in a `.env` file in the `root/` directory.
 
-### Installation Steps
-1. Clone the repository: `git clone <repository_url>`
-2. Navigate to the project root: `cd iqp-named-erratics`
-3. Install all Node.js dependencies (root, frontend, backend):
+### Installation and Data Workflow
+1. Clone the repository and navigate to the project root.
+2. Install all Node.js dependencies for the entire project (root, frontend, backend):
    ```bash
    npm run install:all
    ```
-4. Run database migrations from the project root to create tables and apply schema changes:
+3. Run database migrations from the **project root** to create the required tables:
    ```bash
    npm run db:migrate 
    ``` 
@@ -104,19 +94,27 @@ This application provides an interactive map interface to explore named glacial 
     *   **GMTED2010 DEM Tiles:** All individual `.tif` files for the required coverage (e.g., `30n090w_20101117_gmted_mea300.tif` in `elevation/GMTED2010N30W090_300/`, etc.).
     *   **GLCC Data (Future):** Various GLCC `.tif` files (in `glcc/`). (Note: GLCC data integration is planned for the future).
     *   **OpenStreetMap PBF (Optional but Recommended):** Download `north-america-latest.osm.pbf` (or relevant regional extracts like `us-latest.osm.pbf`, `canada-latest.osm.pbf`) from a source like Geofabrik. Place it in `backend/src/scripts/python/data/gis/osm/north_america_pbf/` (or `us_pbf/`, `canada_pbf/` respectively). If not provided, PBF processing will be skipped by the pipeline for these sources.
-6. Seed the database (if seeders are available):
-   ```bash
-   npm run db:seed:all 
-   ```
-7. **Build Topic Model (One-time or when data updates):**
-   ```bash
-   # From the project root directory:
-   python backend/src/scripts/python/classify_erratic.py 1 --build-topics --output temp_build_log.json
-   ```
+
+6. Import the initial core erratic data from the CSV file. This script must be run from the `backend` directory:
+```bash
+cd backend
+npm run db:import
+cd .. 
+```
+7. **Populate Analysis Data (Choose ONE option):**
+    The core erratic data is now loaded, but the associated analysis fields (proximity, classification, etc.) are still empty. You can populate them using one of the following methods.
+
+    - **Option A: Run the All-in-One Python Script (Recommended for initial setup)**
+      This script iterates through all erratics and runs the necessary proximity and classification analyses to populate the `ErraticAnalyses` table. Make sure your `glacial-erratics` conda environment is active.
+      ```bash
+      # From the project root directory:
+      python backend/src/scripts/python/run_analysis.py --all
+      ```
+
+    - **Option B: Use the API Endpoints (For targeted updates or dynamic analysis)**
+      After starting the application, you can use the backend's API endpoints to run analyses for individual erratics or in batches. This is useful for updating specific records or if you prefer a more interactive approach.
+
 8. Start the development servers (from the project root):
-   ```bash
-   npm run dev
-   ```
 
 ## Database Structure
 
@@ -186,15 +184,15 @@ Stores results computed by the backend Python analysis pipeline.
 - `GET /api/erratics/nearby`: Get erratics near a specific location (lat, lng, radius).
 
 ### Public Analysis Endpoints (Trigger Python Scripts)
-- `GET /api/analysis/proximity/:id`: Calculates/retrieves proximity and context metrics for a specific erratic. **(Fully implemented; calls `proximity_analysis.py` which handles calculations and DB updates via `data_loader.py`).**
-- `GET /api/analysis/classify/:id`: Classifies an erratic using pre-trained NLP models. **(Fully implemented; calls `classify_erratic.py` which handles classification and DB updates via `data_loader.py`).**
-- `GET /api/analysis/cluster`: Triggers spatial clustering on all erratics. This is an asynchronous operation that starts a background job. Results are typically written to a file specified by the Python script or logged by the backend.
-    - Query Parameters:
-        - `algorithm` (string, e.g., 'dbscan', 'kmeans', 'hierarchical', default: 'dbscan')
-        - `features` (string, comma-separated, e.g., 'latitude,longitude')
-        - `algoParams` (string, JSON string of algorithm-specific parameters, e.g., '{\"eps\":0.5,\"min_samples\":5}')
-        - `outputToFile` (string, 'true' or 'false', default: 'true' in Python script, controller passes this through)
-        - `outputFilename` (string, default: 'clustering_results.json' in Python script, controller passes this through)
+
+The backend provides endpoints to trigger analysis. Many are **asynchronous**, meaning they start a background job and return a `job_id`. You can poll the `GET /api/analysis/jobs/:jobId` endpoint to check the status.
+
+- `GET /api/analysis/proximity/:id`: **Synchronous**. Calculates proximity metrics for a single erratic.
+- `POST /api/analysis/proximity/batch`: **Asynchronous**. Runs proximity analysis for a list of erratic IDs.
+- `GET /api/analysis/classify/:id`: **Synchronous**. Classifies a single erratic using NLP models.
+- `POST /api/analysis/classify/batch`: **Asynchronous**. Runs classification for a list of erratic IDs.
+- `GET /api/analysis/cluster`: **Asynchronous**. Triggers spatial clustering on all erratics.
+- `POST /api/analysis/build-topics` (Admin): **Asynchronous**. Retrains the NLP topic models.
 
 ### Protected Admin Endpoints
 - `POST /api/erratics`: Create a new erratic.
@@ -202,10 +200,6 @@ Stores results computed by the backend Python analysis pipeline.
 - `DELETE /api/erratics/:id`: Delete an erratic.
 - `POST /api/auth/login`: Admin login.
 - `GET /api/auth/profile`: Get admin profile information.
-- `POST /api/analysis/proximity/batch`: Trigger proximity analysis for multiple erratic IDs. **(Fully implemented; calls `proximity_analysis.py` in a loop).**
-- `POST /api/analysis/classify/batch`: Trigger NLP classification for multiple erratic IDs. **(Fully implemented; calls `classify_erratic.py` in a loop).**
-- `POST /api/analysis/build-topics`: Triggers the building/retraining of NLP topic models. This is an asynchronous, admin-only operation that starts a background job.
-    - Request Body: `{ "outputPath": "build_topics_result.json" }` (optional, specifies output log file for the Python script)
 
 ## Frontend Features
 

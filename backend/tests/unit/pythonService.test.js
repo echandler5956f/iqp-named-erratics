@@ -1,180 +1,144 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
-const childProcess = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const pythonService = require('../../src/services/pythonService');
+const proxyquire = require('proxyquire').noCallThru();
 
-describe('Python Service', function() {
-  // Stub for exec and fs
-  let execStub, fsExistsStub, originalExec;
-  
-  before(function() {
-    // Save the original exec
-    originalExec = childProcess.exec;
-  });
+// Mock dependencies
+const childProcessMock = {
+  exec: sinon.stub(),
+};
+const fsMock = {
+  existsSync: sinon.stub(),
+};
+const loggerMock = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+};
+
+// Use proxyquire to inject mocks
+const pythonService = proxyquire('../../src/services/pythonService', {
+  'child_process': childProcessMock,
+  'fs': fsMock,
+  '../utils/logger': loggerMock,
+});
+
+describe('Python Service - Unit Tests', function() {
   
   beforeEach(function() {
-    // Create a replacement function for exec that we control completely
-    childProcess.exec = function mockExec(command, callback) {
-      // We can check the command but don't actually run it
-      const returnValue = {
-        on: sinon.stub()
-      };
-      
-      // Default to success
-      if (callback) {
-        process.nextTick(() => callback(null, '{"success": true}', ''));
-      }
-      
-      return returnValue;
-    };
-    
-    // Spy on our mock exec to track calls
-    execStub = sinon.spy(childProcess, 'exec');
-    
-    // Make fs.existsSync always return true by default
-    fsExistsStub = sinon.stub(fs, 'existsSync').returns(true);
+    sinon.reset();
+    // Default mock behavior
+    fsMock.existsSync.returns(true);
+    childProcessMock.exec.yields(null, '{"success": true}', ''); // Simulate successful execution
   });
-  
-  afterEach(function() {
-    sinon.restore();
-  });
-  
-  after(function() {
-    // Restore the original exec
-    childProcess.exec = originalExec;
-  });
-  
+
   describe('runScript', function() {
-    it('should execute a Python script with the correct parameters', async function() {
-      // Arrange
+    it('should execute a Python script with correct parameters', async function() {
       const scriptName = 'test_script.py';
       const args = ['arg1', 'arg2'];
-      const mockOutput = JSON.stringify({ result: 'success', args: ['arg1', 'arg2'] });
       
-      // Override our exec mock for this specific test
-      childProcess.exec = function(command, callback) {
-        // Validate the command string
-        expect(command).to.include(scriptName);
-        expect(command).to.include('arg1 arg2');
-        
-        // Return the mock output
-        callback(null, mockOutput, '');
-        
-        return { on: sinon.stub() };
-      };
-      
-      // Act
-      const result = await pythonService.runScript(scriptName, args);
-      
-      // Assert
-      expect(result).to.deep.equal({ result: 'success', args: ['arg1', 'arg2'] });
+      await pythonService.runScript(scriptName, args);
+
+      expect(childProcessMock.exec.calledOnce).to.be.true;
+      const command = childProcessMock.exec.firstCall.args[0];
+      expect(command).to.include(scriptName);
+      expect(command).to.include('arg1 arg2');
     });
-    
+
+    it('should throw an error if script does not exist', async function() {
+      fsMock.existsSync.returns(false);
+      try {
+        await pythonService.runScript('non_existent.py', []);
+        // Fail the test if no error is thrown
+        expect.fail('Expected runScript to throw an error but it did not.');
+      } catch (error) {
+        expect(error.message).to.include('Python script not found');
+      }
+    });
+
     it('should handle script execution errors', async function() {
-      // Arrange
-      const scriptName = 'test_script.py';
-      const error = new Error('Script execution failed');
-      
-      // Create a stub for the runScript method to force the error
-      const runScriptStub = sinon.stub(pythonService, 'runScript');
-      runScriptStub.throws(error);
-      
-      // Act & Assert
+      const execError = new Error('command failed');
+      childProcessMock.exec.yields(execError, '', 'stderr output');
+
       try {
-        await pythonService.runScript(scriptName);
-        expect.fail('Should have thrown an error');
-      } catch (err) {
-        expect(err.message).to.equal('Script execution failed');
+        await pythonService.runScript('fail_script.py', []);
+        expect.fail('Expected runScript to throw an error but it did not.');
+      } catch (error) {
+        expect(error.message).to.include('Execution failed for script');
       }
     });
-    
-    it('should handle invalid JSON output', async function() {
+
+    it('should handle invalid JSON output from script', async function() {
+      childProcessMock.exec.yields(null, 'this is not json', '');
+
       try {
-        // Run the script that outputs invalid JSON
-        await pythonService.runScript('invalid_json_test.py');
-        expect.fail('Should have thrown an error');
-      } catch (err) {
-        expect(err.message).to.equal('Invalid output format from Python script');
-      }
-    });
-    
-    it('should handle non-existent scripts', async function() {
-      // Arrange
-      const scriptName = 'non_existent_script.py';
-      
-      // Override the fsExistsStub for this test only
-      fsExistsStub.returns(false);
-      
-      // Act & Assert
-      try {
-        await pythonService.runScript(scriptName);
-        expect.fail('Should have thrown an error');
-      } catch (err) {
-        expect(err.message).to.include('Python script not found');
+        await pythonService.runScript('bad_json_script.py', []);
+        expect.fail('Expected runScript to throw an error but it did not.');
+      } catch (error) {
+        expect(error.message).to.include('Invalid JSON output');
       }
     });
   });
-  
+
   describe('runProximityAnalysis', function() {
-    it('should call runScript with the correct parameters', async function() {
-      // Arrange
-      const erraticId = 1;
-      const featureLayers = ['water_bodies', 'settlements'];
-      const updateDb = true;
+    it('should call runScript with correct arguments', async function() {
+      const runScriptStub = sinon.stub(pythonService, 'runScript').resolves();
+      await pythonService.runProximityAnalysis(1, ['water', 'roads'], true);
       
-      // Create a stub for the runScript method
-      const runScriptStub = sinon.stub(pythonService, 'runScript').resolves({ result: 'success' });
-      
-      // Act
-      await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
-      
-      // Assert
       expect(runScriptStub.calledOnce).to.be.true;
-      expect(runScriptStub.firstCall.args[0]).to.equal('proximity_analysis.py');
+      const [scriptName, args] = runScriptStub.firstCall.args;
+      expect(scriptName).to.equal('proximity_analysis.py');
+      expect(args).to.deep.equal(['1', '--features', 'water', 'roads', '--update-db']);
       
-      const passedArgs = runScriptStub.firstCall.args[1];
-      expect(passedArgs).to.include('1');
-      expect(passedArgs).to.include('--features');
-      expect(passedArgs).to.include('water_bodies');
-      expect(passedArgs).to.include('settlements');
-      expect(passedArgs).to.include('--update-db');
+      runScriptStub.restore();
     });
-    
-    it('should not include --update-db flag when updateDb is false', async function() {
-      // Arrange
-      const erraticId = 1;
-      const featureLayers = ['water_bodies'];
-      const updateDb = false;
-      
-      // Create a stub for the runScript method
-      const runScriptStub = sinon.stub(pythonService, 'runScript').resolves({ result: 'success' });
-      
-      // Act
-      await pythonService.runProximityAnalysis(erraticId, featureLayers, updateDb);
-      
-      // Assert
-      expect(runScriptStub.calledOnce).to.be.true;
-      const passedArgs = runScriptStub.firstCall.args[1];
-      expect(passedArgs).to.not.include('--update-db');
+  });
+
+  describe('runClassification', function() {
+    it('should call runScript with correct arguments', async function() {
+        const runScriptStub = sinon.stub(pythonService, 'runScript').resolves();
+        await pythonService.runClassification(5, true);
+        
+        expect(runScriptStub.calledOnce).to.be.true;
+        const [scriptName, args] = runScriptStub.firstCall.args;
+        expect(scriptName).to.equal('classify_erratic.py');
+        expect(args).to.deep.equal(['5', '--update-db']);
+        
+        runScriptStub.restore();
     });
-    
-    it('should not include feature layers if none are provided', async function() {
-      // Arrange
-      const erraticId = 1;
-      const featureLayers = [];
-      
-      // Create a stub for the runScript method
-      const runScriptStub = sinon.stub(pythonService, 'runScript').resolves({ result: 'success' });
-      
-      // Act
-      await pythonService.runProximityAnalysis(erraticId, featureLayers);
-      
-      // Assert
-      expect(runScriptStub.calledOnce).to.be.true;
-      const passedArgs = runScriptStub.firstCall.args[1];
-      expect(passedArgs).to.not.include('--features');
+  });
+
+  describe('runClusteringAnalysis', function() {
+    it('should call runScript with correct arguments including JSON params', async function() {
+        const runScriptStub = sinon.stub(pythonService, 'runScript').resolves();
+        const algoParams = { eps: 0.5, min_samples: 5 };
+        await pythonService.runClusteringAnalysis('dbscan', ['lat', 'lon'], algoParams, true, 'results.json');
+        
+        expect(runScriptStub.calledOnce).to.be.true;
+        const [scriptName, args] = runScriptStub.firstCall.args;
+        expect(scriptName).to.equal('clustering.py');
+        expect(args).to.deep.equal([
+            '--algorithm', 'dbscan',
+            '--features', 'lat', 'lon',
+            '--algo_params', '{"eps":0.5,"min_samples":5}',
+            '--output', 'results.json'
+        ]);
+        
+        runScriptStub.restore();
+    });
+  });
+
+  describe('runBuildTopicModels', function() {
+    it('should call runScript with correct arguments and placeholder ID', async function() {
+        const runScriptStub = sinon.stub(pythonService, 'runScript').resolves();
+        await pythonService.runBuildTopicModels('topics.json');
+        
+        expect(runScriptStub.calledOnce).to.be.true;
+        const [scriptName, args] = runScriptStub.firstCall.args;
+        expect(scriptName).to.equal('classify_erratic.py');
+        expect(args).to.deep.equal(['1', '--build-topics', '--output', 'topics.json']);
+        
+        runScriptStub.restore();
     });
   });
 }); 

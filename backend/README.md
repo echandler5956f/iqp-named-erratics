@@ -1,22 +1,21 @@
 # Glacial Erratics Map - Backend
 
-A robust Node.js backend providing RESTful APIs for glacial erratics data management, spatial analysis integration, and user authentication. Built with Express.js, PostgreSQL/PostGIS, and integrated Python analysis scripts.
+A robust Node.js backend providing RESTful APIs for glacial erratics data management, real-time spatial analysis, and user authentication. Built with Express.js, PostgreSQL/PostGIS, and integrated Python analysis scripts.
 
 ## Overview
 
-The backend serves as the central data management and analysis coordination layer for the Glacial Erratics Map application. It provides APIs for erratic data retrieval, manages spatial analysis workflows, and coordinates with Python scripts for advanced geospatial computations.
+The backend serves as the central data management and analysis coordination layer for the Glacial Erratics Map application. It provides APIs for erratic data retrieval, manages computationally intensive spatial analysis workflows via a job-based system, and coordinates with Python scripts for advanced geospatial computations.
 
 ## Architecture
 
 ### Technology Stack
 
-- **Runtime**: Node.js 20.19.0+
+- **Runtime**: Node.js 20.x
 - **Framework**: Express.js for RESTful APIs
-- **Database**: PostgreSQL 14+ with PostGIS extension
+- **Database**: PostgreSQL 14+ with PostGIS and pgvector extensions
 - **ORM**: Sequelize for database operations
-- **Authentication**: JWT-based authentication
-- **Process Management**: Child process execution for Python scripts
-- **Extensions**: pgvector for vector similarity search (optional)
+- **Authentication**: JWT-based authentication for admin routes
+- **Async Jobs**: In-memory job queue for long-running analysis tasks
 - **Logging**: Winston with daily rotation
 
 ### Project Structure
@@ -79,429 +78,99 @@ Authorization: Bearer <your-jwt-token>
 
 ### Endpoints
 
-#### Erratics
+#### Erratics (`/api/erratics`)
+- `GET /`: Get all erratics. Supports pagination and filtering.
+- `GET /:id`: Get a single erratic by ID, including its analysis data.
+- `GET /nearby`: Get erratics within a radius. Query params: `lat`, `lng`, `radius`.
+- `POST /` (Admin): Create a new erratic.
+- `PUT /:id` (Admin): Update an existing erratic.
+- `DELETE /:id` (Admin): Delete an erratic.
 
-**Get All Erratics**
-```
-GET /api/erratics
-```
-Returns all erratics with optional joined analysis data.
+#### Analysis (`/api/analysis`)
 
-Response:
-```json
-[
-  {
-    "id": 1,
-    "name": "Plymouth Rock",
-    "location": {
-      "type": "Point",
-      "coordinates": [-70.6620, 41.9584]
-    },
-    "size_meters": 3.0,
-    "rock_type": "Dedham Granite",
-    "elevation": 2.0,
-    "description": "Historic landing site...",
-    "cultural_significance": "Symbolic importance...",
-    "historical_notes": "Associated with Mayflower...",
-    "image_url": "https://example.com/image.jpg",
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-01T00:00:00.000Z",
-    // Joined analysis data
-    "nearest_water_body_dist": 15.2,
-    "nearest_settlement_dist": 200.5,
-    "nearest_natd_road_dist": 50.0,
-    "nearest_forest_trail_dist": 1500.0,
-    "nearest_native_territory_dist": 0.0,
-    "accessibility_score": 5,
-    "size_category": "Medium",
-    "usage_type": ["ceremonial", "landmark"],
-    "has_inscriptions": false,
-    "cultural_significance_score": 8,
-    "elevation_category": "coastal",
-    "geological_type": "igneous",
-    "estimated_displacement_dist": 15000.0,
-    "vector_embedding": [0.1, 0.2, ...],
-    "ruggedness_tri": 0.05,
-    "terrain_landform": "coastal_plain",
-    "terrain_slope_position": "flat"
-  }
-]
-```
+Many analysis endpoints are asynchronous. They accept a request, start a background job, and immediately return a **`202 Accepted`** response with a `job_id`. The status of the job can be polled using the `/jobs/:jobId` endpoint.
 
-**Get Single Erratic**
-```
-GET /api/erratics/:id
-```
-Returns a specific erratic by ID with analysis data.
+- `GET /proximity/:id`: **Synchronous**. Triggers proximity analysis for a *single* erratic and returns the result directly.
+- `POST /proximity/batch`: **Asynchronous**. Starts a batch job to run proximity analysis on multiple erratics.
+  - **Body**: `{ "erraticIds": [1, 2, 3] }`
+- `GET /classify/:id`: **Synchronous**. Runs NLP classification for a *single* erratic and returns the result directly.
+- `POST /classify/batch`: **Asynchronous**. Starts a batch job to classify multiple erratics.
+  - **Body**: `{ "erraticIds": [1, 2, 3] }`
+- `GET /cluster`: **Asynchronous**. Starts a job to perform spatial clustering on all erratics.
+  - **Query Params**: `algorithm`, `features`, `algoParams`
+- `POST /build-topics` (Admin): **Asynchronous**. Starts a job to build/retrain NLP topic models.
 
-**Get Nearby Erratics**
-```
-GET /api/erratics/nearby?lat=42.0&lng=-71.0&radius=10000
-```
-Query Parameters:
-- `lat`: Latitude (required)
-- `lng`: Longitude (required) 
-- `radius`: Search radius in meters (default: 10000)
+#### Jobs (`/api/analysis/jobs`)
+- `GET /:jobId`: Get the status and result of a background job.
+  - **Response (example)**:
+    ```json
+    {
+      "id": "batch_proximity_1678886400000_abcdef",
+      "type": "batch_proximity",
+      "status": "completed",
+      "createdAt": "...",
+      "updatedAt": "...",
+      "params": { "count": 3 },
+      "result": { "successful": 3, "failed": 0, "errors": [] },
+      "error": null
+    }
+    ```
 
-**Create Erratic** (Admin)
-```
-POST /api/erratics
-```
-Creates a new erratic record.
-
-**Update Erratic** (Admin)
-```
-PUT /api/erratics/:id
-```
-Updates an existing erratic.
-
-**Delete Erratic** (Admin)
-```
-DELETE /api/erratics/:id
-```
-Deletes an erratic and related records.
-
-#### Analysis
-
-**Proximity Analysis**
-```
-GET /api/analysis/proximity/:id
-```
-Triggers proximity analysis for a specific erratic. Executes Python script and updates database.
-
-Response:
-```json
-{
-  "success": true,
-  "message": "Proximity analysis completed",
-  "erraticId": 1,
-  "analysisData": {
-    "nearest_water_body_dist": 15.2,
-    "nearest_settlement_dist": 200.5,
-    // ... other proximity metrics
-  }
-}
-```
-
-**Batch Proximity Analysis** (Admin)
-```
-POST /api/analysis/proximity/batch
-```
-Request body:
-```json
-{
-  "erraticIds": [1, 2, 3, 4, 5]
-}
-```
-
-**Erratic Classification**
-```
-GET /api/analysis/classify/:id
-```
-Runs NLP classification analysis on erratic text data.
-
-**Batch Classification** (Admin)
-```
-POST /api/analysis/classify/batch
-```
-
-**Spatial Clustering**
-```
-GET /api/analysis/cluster
-```
-Query Parameters:
-- `algorithm`: 'dbscan', 'kmeans', or 'hierarchical' (default: 'dbscan')
-- `features`: Comma-separated feature names (default: 'latitude,longitude')
-- `algoParams`: JSON string of algorithm parameters
-- `outputToFile`: 'true' or 'false' (default: 'true')
-- `outputFilename`: Output filename (default: 'clustering_results.json')
-
-**Build Topic Models** (Admin)
-```
-POST /api/analysis/build-topics
-```
-Triggers topic model training for NLP classification.
-
-#### Authentication
-
-**Login**
-```
-POST /api/auth/login
-```
-Request body:
-```json
-{
-  "username": "admin",
-  "password": "your-password"
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "id": 1,
-    "username": "admin",
-    "email": "admin@example.com",
-    "is_admin": true
-  }
-}
-```
-
-**Get Profile**
-```
-GET /api/auth/profile
-```
-Returns current user information (requires authentication).
+#### Authentication (`/api/auth`)
+- `POST /login`: Admin login.
+- `POST /register` (Admin): Register a new admin user.
+- `GET /profile` (Admin): Get current user's profile.
 
 ## Database Models
 
-### Erratic
-Primary model storing basic erratic information.
+The schema separates core erratic data from computed analysis results for clarity and performance.
 
-```javascript
-{
-  id: INTEGER (Primary Key),
-  name: STRING (Required),
-  location: GEOMETRY('POINT', 4326) (Required),
-  elevation: FLOAT,
-  size_meters: FLOAT,
-  rock_type: STRING,
-  estimated_age: STRING,
-  discovery_date: DATE,
-  description: TEXT,
-  cultural_significance: TEXT,
-  historical_notes: TEXT,
-  image_url: STRING,
-  timestamps: true
-}
-```
+### `Erratic`
+Stores the fundamental, directly observed, or historically recorded information about each glacial erratic.
+- **Fields**: `id`, `name`, `location` (PostGIS Point), `elevation`, `size_meters`, `rock_type`, `description`, etc.
+- **Associations**: `hasOne(ErraticAnalysis)`, `hasMany(ErraticMedia)`, `hasMany(ErraticReference)`
 
-### ErraticAnalysis
-Stores computed analysis results.
+### `ErraticAnalysis`
+Stores all computed results from the backend Python analysis pipeline. This table has a one-to-one relationship with the `Erratics` table.
+- **Fields**: `erraticId` (PK/FK), `usage_type`, `has_inscriptions`, `accessibility_score`, `nearest_water_body_dist`, `vector_embedding` (pgvector), `ruggedness_tri`, etc.
 
-```javascript
-{
-  erraticId: INTEGER (Primary Key, Foreign Key),
-  usage_type: ARRAY(STRING),
-  cultural_significance_score: INTEGER,
-  has_inscriptions: BOOLEAN,
-  accessibility_score: INTEGER,
-  size_category: STRING,
-  nearest_water_body_dist: FLOAT,
-  nearest_settlement_dist: FLOAT,
-  nearest_road_dist: FLOAT,
-  nearest_native_territory_dist: FLOAT,
-  nearest_natd_road_dist: FLOAT,
-  nearest_forest_trail_dist: FLOAT,
-  elevation_category: STRING,
-  geological_type: STRING,
-  estimated_displacement_dist: FLOAT,
-  vector_embedding: VECTOR(384),
-  ruggedness_tri: FLOAT,
-  terrain_landform: STRING,
-  terrain_slope_position: STRING,
-  timestamps: true
-}
-```
-
-### ErraticMedia
-Media files associated with erratics.
-
-```javascript
-{
-  id: INTEGER (Primary Key),
-  erraticId: INTEGER (Foreign Key),
-  media_type: ENUM('image', 'video', 'document', 'other'),
-  url: STRING (Required),
-  title: STRING,
-  description: TEXT,
-  credit: STRING,
-  capture_date: DATE,
-  timestamps: true
-}
-```
-
-### ErraticReference
-Scientific references and citations.
-
-```javascript
-{
-  id: INTEGER (Primary Key),
-  erraticId: INTEGER (Foreign Key),
-  reference_type: ENUM('article', 'book', 'paper', 'website', 'other'),
-  title: STRING (Required),
-  authors: STRING,
-  publication: STRING,
-  year: INTEGER,
-  url: STRING,
-  doi: STRING,
-  description: TEXT,
-  timestamps: true
-}
-```
-
-### User
-Admin user accounts.
-
-```javascript
-{
-  id: INTEGER (Primary Key),
-  username: STRING (Unique, Required),
-  email: STRING (Unique, Required),
-  password: STRING (Hashed, Required),
-  is_admin: BOOLEAN (Default: false),
-  last_login: DATE,
-  timestamps: true
-}
-```
+### Other Models
+- **ErraticMedia**: Media files associated with erratics.
+- **ErraticReference**: Scientific references and citations.
+- **User**: Admin user accounts.
 
 ## Python Integration
 
-### Python Service
+The `pythonService.js` module executes Python analysis scripts from the `src/scripts/python/` directory using `child_process`. It manages passing arguments and parsing JSON results from the scripts.
 
-The `pythonService.js` module handles execution of Python analysis scripts:
-
-```javascript
-const { execPython } = require('./services/pythonService');
-
-// Execute proximity analysis
-const result = await execPython('proximity_analysis.py', [
-  erraticId,
-  '--update-db',
-  '--output', 'results.json'
-]);
-```
-
-### Available Scripts
-
-- **proximity_analysis.py**: Calculates distances to various geographic features
-- **classify_erratic.py**: NLP-based text classification and topic modeling
-- **clustering.py**: Spatial clustering analysis
-- **importData.js**: Data import utilities
-
-### Environment Requirements
-
-Python scripts require:
-- Python 3.10+ with Conda environment (`iqp-py310`)
-- GDAL/OGR tools for geospatial processing
-- Various Python packages (see `src/scripts/python/requirements.txt`)
+- **Scripts**: `proximity_analysis.py`, `classify_erratic.py`, `clustering.py`.
+- **Environment**: Scripts require the `glacial-erratics` Conda environment to be active when the Node.js server is running. Refer to `src/scripts/python/README.md` for setup and the easy-to-use conda environment setup script (`src/scripts/python/create_conda_env_strict.sh`, which will automatically create a new conda environbment called `glacial-erratics` and install all the necessary Python packages.).
 
 ## Development
 
 ### Setup
 
-1. **Install Dependencies**
-```bash
-npm install
-```
+1.  **Install Dependencies**: `npm install`
+2.  **Environment**: Create a `.env` file in the `root/` directory.
+3.  **Database**: Ensure PostgreSQL is running with the PostGIS and pgvector extensions enabled.
+4.  **Start Dev Server**: `npm run dev`
 
-2. **Environment Configuration**
-Create `.env` file in project root:
-```env
-# Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=glacial_erratics
-DB_USER=your_username
-DB_PASSWORD=your_password
+### Database Workflow
+The database setup is managed from the **project root**.
 
-# Authentication
-JWT_SECRET=your-secret-key
-JWT_EXPIRES_IN=24h
+1.  **Run Migrations**: `npm run db:migrate` (from project root)
+2.  **Seed Initial Data**: `npm run db:import` (from `backend/` directory). This populates the `Erratics` table with initial data from `src/data/erratics.csv`.
+3.  **Run Analysis (Optional but Recommended)**: The `ErraticAnalyses` table can be populated by running the spatial analysis scripts. A helper script is provided for this. Specifically, you can run `python src/scripts/python/run_analysis.py pipeline --classify-each --proximity-each --update-db --max-workers=4` to execute the spatial analysis and classification algorithms and update the corresponding database columns.
 
-# Environment
-NODE_ENV=development
-PORT=3001
-```
+### Testing
 
-3. **Database Setup**
-```bash
-# Run migrations
-npm run db:migrate
+The test suite uses **Mocha** and **Chai**. Tests are located in the `tests/` directory and are separated into `unit` and `integration` tests. Mocks and stubs are created using **Sinon** and **Proxyquire**.
 
-# Import data (optional)
-npm run db:import
-```
-
-4. **Start Development Server**
-```bash
-npm run dev
-```
-
-### Scripts
-
-```bash
-# Development server with auto-reload
-npm run dev
-
-# Production server
-npm start
-
-# Database operations
-npm run db:migrate          # Run pending migrations
-npm run db:migrate:undo     # Undo last migration
-npm run db:import           # Import CSV data
-
-# Testing
-npm test                    # Run test suite
-npm run test:unit          # Unit tests only
-npm run test:integration   # Integration tests only
-
-# Python analysis
-npm run spatial:analyze    # Run spatial analysis on all erratics
-```
-
-### Database Migrations
-
-Create new migration:
-```bash
-npx sequelize-cli migration:generate --name migration-name
-```
-
-Run migrations:
-```bash
-npx sequelize-cli db:migrate
-```
-
-Undo migrations:
-```bash
-npx sequelize-cli db:migrate:undo
-```
-
-## Testing
-
-### Test Structure
-
-```
-tests/
-├── unit/                   # Unit tests
-│   ├── controllers/
-│   ├── models/
-│   └── services/
-├── integration/            # Integration tests
-│   ├── api/
-│   └── database/
-└── mocks/                 # Test mocks and fixtures
-```
-
-### Running Tests
-
-```bash
-# All tests
-npm test
-
-# With coverage
-npm run test:coverage
-
-# Watch mode
-npm run test:watch
-
-# Specific test file
-npm test -- --grep "erratic controller"
-```
+- **Run all tests**:
+  ```bash
+  npm test
+  ```
+This command will automatically load environment variables from `tests/test-setup.js` and run all `*.test.js` files.
 
 ## Deployment
 

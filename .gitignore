@@ -23,7 +23,7 @@ backend/src/scripts/python/data/
 
 # Environment variables files
 *.env
-**.env # Covers .env in any subdirectory, but be specific if possible
+**.env
 .env.*
 !.env.example
 

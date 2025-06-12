@@ -3,15 +3,10 @@
   "version": "1.0.0",
   "main": "src/index.js",
   "scripts": {
-    "test": "mocha tests/**/*.test.js",
+    "test": "mocha --require tests/test-setup.js tests/**/*.test.js --exit",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "db:import": "node src/scripts/importData.js",
-    "db:migrate": "npx sequelize-cli db:migrate",
-    "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
-    "db:migration:create": "npx sequelize-cli migration:generate --name",
-    "spatial:install": "npm run db:migrate",
-    "spatial:analyze": "echo 'Running spatial analysis on all erratics' && node src/scripts/runSpatialAnalysis.js"
+    "db:import": "node src/scripts/importData.js"
   },
   "keywords": [],
   "author": "",

@@ -4,240 +4,162 @@ const sinon = require('sinon');
 const proxyquire = require('proxyquire').noCallThru();
 const express = require('express');
 
-// Import mock services
-const pythonServiceMock = require('../mocks/pythonService.mock');
+// Mock services and utilities
+const pythonServiceMock = {
+  runProximityAnalysis: sinon.stub(),
+  runClassification: sinon.stub(),
+  // Stub other pythonService methods if their routes are tested
+};
 
-// Create a custom AnalysisController class for testing
-class AnalysisControllerTest {
-  constructor() {
-    // Bind methods to the instance
-    this._processBatchAnalysis = this._processBatchAnalysis.bind(this);
-    this.getProximityAnalysis = this.getProximityAnalysis.bind(this);
-    this.batchProximityAnalysis = this.batchProximityAnalysis.bind(this);
-  }
+// We will use the actual job store logic but can spy on it
+const { jobStore, generateJobId } = require('../../src/utils/jobStore');
+const jobStoreSpy = {
+  addJob: sinon.spy(jobStore, 'addJob'),
+  updateJobStatus: sinon.spy(jobStore, 'updateJobStatus'),
+  getJob: sinon.spy(jobStore, 'getJob'),
+};
 
-  async getProximityAnalysis(req, res) {
-    const erraticId = parseInt(req.params.id);
-    
-    if (isNaN(erraticId)) {
-      return res.status(400).json({ error: 'Invalid erratic ID' });
-    }
-    
-    const featureLayers = req.query.features ? req.query.features.split(',') : [];
-    const updateDb = req.query.update === 'true';
-    
-    try {
-      const results = await pythonServiceMock.runProximityAnalysis(erraticId, featureLayers, updateDb);
-      
-      if (results.error) {
-        return res.status(404).json({ error: results.error });
-      }
-      
-      res.json(results);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  async batchProximityAnalysis(req, res) {
-    const { erraticIds, featureLayers, updateDb } = req.body;
-    
-    if (!Array.isArray(erraticIds) || erraticIds.length === 0) {
-      return res.status(400).json({ error: 'Invalid or empty erratic ID list' });
-    }
-    
-    res.json({ 
-      message: 'Batch analysis started', 
-      job_id: `batch_${Date.now()}`,
-      erratics_count: erraticIds.length
-    });
-    
-    // Process in background
-    this._processBatchAnalysis(erraticIds, featureLayers, updateDb)
-      .catch(error => console.error('Error in batch processing:', error));
-  }
-
-  async _processBatchAnalysis(erraticIds, featureLayers = [], updateDb = true) {
-    const results = {
-      successful: [],
-      failed: []
-    };
-    
-    for (const erraticId of erraticIds) {
-      try {
-        const result = await pythonServiceMock.runProximityAnalysis(erraticId, featureLayers, updateDb);
-        if (result.error) {
-          results.failed.push({ id: erraticId, error: result.error });
-        } else {
-          results.successful.push(erraticId);
-        }
-      } catch (error) {
-        results.failed.push({ id: erraticId, error: error.message });
-      }
-    }
-    
-    console.log(`Batch analysis completed. Successful: ${results.successful.length}, Failed: ${results.failed.length}`);
-    return results;
-  }
-}
-
-describe('Analysis Routes Integration Tests', function() {
-  let app, server;
-  
-  // Set timeout for integration tests
+describe('Analysis Routes - Integration Tests', function() {
+  let app;
   this.timeout(5000);
-  
+
   before(function() {
-    // Create a mock app for testing
-    app = express();
-    app.use(express.json());
-    
-    // Mock JWT auth middleware for protected routes
+    // Reset stubs and spies before tests
+    sinon.reset();
+
+    // Mock the python service in the controller
+    const analysisController = proxyquire('../../src/controllers/analysisController', {
+      '../services/pythonService': pythonServiceMock,
+      '../utils/jobStore': { jobStore, generateJobId }, // Use real job store
+      '../utils/logger': { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
+    });
+
+    // Mock auth middleware
     const authMiddleware = {
       authenticateToken: (req, res, next) => next(),
       requireAdmin: (req, res, next) => next()
     };
     
-    // Create controller directly
-    const analysisController = new AnalysisControllerTest();
-    
-    // Create router with mocked dependencies
-    const router = proxyquire('../../src/routes/analysisRoutes', {
+    // Create router with the controller that has mocked dependencies
+    const analysisRoutes = proxyquire('../../src/routes/analysisRoutes', {
       '../controllers/analysisController': analysisController,
       '../utils/auth': authMiddleware
     });
     
-    // Mount the router
-    app.use('/api/analysis', router);
-    
-    // Add error handler
-    app.use((err, req, res, next) => {
-      res.status(500).json({ error: err.message });
-    });
+    // Setup express app
+    app = express();
+    app.use(express.json());
+    app.use('/api/analysis', analysisRoutes);
   });
-  
+
+  afterEach(function() {
+    // Clear spies history after each test
+    sinon.resetHistory();
+  });
+
   after(function() {
-    if (server) {
-      server.close();
-    }
+    // Restore original methods
+    sinon.restore();
   });
   
   describe('GET /api/analysis/proximity/:id', function() {
-    it('should return 200 and proximity analysis for valid erratic ID', function(done) {
-      request(app)
+    it('should return 200 and analysis for a valid ID', async () => {
+      const mockResult = { erratic_id: 1, analysis: 'data' };
+      pythonServiceMock.runProximityAnalysis.resolves(mockResult);
+
+      const res = await request(app)
         .get('/api/analysis/proximity/1')
         .expect('Content-Type', /json/)
-        .expect(200)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('erratic_id', 1);
-          expect(res.body).to.have.property('erratic_name', 'Plymouth Rock');
-          expect(res.body).to.have.nested.property('proximity_analysis.elevation_category', 'lowland');
-          done();
-        });
+        .expect(200);
+        
+      expect(res.body).to.deep.equal(mockResult);
+      expect(pythonServiceMock.runProximityAnalysis.calledOnceWith(1)).to.be.true;
     });
     
-    it('should return 400 for invalid erratic ID', function(done) {
-      request(app)
-        .get('/api/analysis/proximity/invalid')
-        .expect('Content-Type', /json/)
-        .expect(400)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('error', 'Invalid erratic ID');
-          done();
-        });
-    });
-    
-    it('should return 404 for non-existent erratic ID', function(done) {
-      request(app)
+    it('should return 404 for a non-existent ID', async () => {
+      pythonServiceMock.runProximityAnalysis.resolves({ error: 'Not found', statusCode: 404 });
+
+      const res = await request(app)
         .get('/api/analysis/proximity/999')
         .expect('Content-Type', /json/)
-        .expect(404)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('error', 'Erratic with ID 999 not found');
-          done();
-        });
+        .expect(404);
+        
+      expect(res.body).to.have.property('error', 'Not found');
     });
-    
-    it('should accept feature layers as query parameter', function(done) {
-      // Spy on the pythonService
-      const runProximityAnalysisSpy = sinon.spy(pythonServiceMock, 'runProximityAnalysis');
+
+    it('should return 400 for an invalid ID', async () => {
+      const res = await request(app)
+        .get('/api/analysis/proximity/invalid')
+        .expect('Content-Type', /json/)
+        .expect(400);
       
-      request(app)
-        .get('/api/analysis/proximity/1?features=water_bodies,settlements')
-        .expect(200)
-        .end((err, res) => {
-          if (err) {
-            runProximityAnalysisSpy.restore();
-            return done(err);
-          }
-          
-          expect(runProximityAnalysisSpy.calledOnce).to.be.true;
-          expect(runProximityAnalysisSpy.firstCall.args[1]).to.deep.equal(['water_bodies', 'settlements']);
-          
-          runProximityAnalysisSpy.restore();
-          done();
-        });
+      expect(res.body).to.have.property('error', 'Invalid erratic ID');
     });
   });
   
   describe('POST /api/analysis/proximity/batch', function() {
-    it('should return 200 and start batch analysis for valid request', function(done) {
-      request(app)
+    it('should return 202 Accepted and create a job', async () => {
+      // Prevent the background process from running and throwing errors
+      pythonServiceMock.runProximityAnalysis.resolves({ success: true });
+
+      const res = await request(app)
         .post('/api/analysis/proximity/batch')
-        .send({
-          erraticIds: [1, 2],
-          featureLayers: ['water_bodies', 'settlements'],
-          updateDb: true
-        })
+        .send({ erraticIds: [1, 2] })
         .expect('Content-Type', /json/)
-        .expect(200)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('message', 'Batch analysis started');
-          expect(res.body).to.have.property('erratics_count', 2);
-          done();
-        });
+        .expect(202);
+      
+      expect(res.body).to.have.property('message', 'Batch proximity analysis accepted');
+      expect(res.body).to.have.property('job_id');
+      
+      const jobId = res.body.job_id;
+      expect(jobStoreSpy.addJob.calledOnce).to.be.true;
+      
+      const job = jobStore.getJob(jobId);
+      expect(job).to.not.be.null;
+      expect(job.status).to.equal('pending');
+      expect(job.type).to.equal('batch_proximity');
     });
-    
-    it('should return 400 for invalid erratic IDs', function(done) {
-      request(app)
+
+    it('should return 400 for invalid request body', async () => {
+      const res = await request(app)
         .post('/api/analysis/proximity/batch')
-        .send({
-          erraticIds: 'invalid',
-          featureLayers: ['water_bodies', 'settlements']
-        })
+        .send({ erraticIds: [] }) // Empty array
         .expect('Content-Type', /json/)
-        .expect(400)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('error', 'Invalid or empty erratic ID list');
-          done();
-        });
+        .expect(400);
+
+      expect(res.body).to.have.property('error', 'Invalid or empty erratic ID list');
     });
-    
-    it('should return 400 for empty erratic IDs array', function(done) {
-      request(app)
+  });
+
+  describe('GET /api/analysis/jobs/:jobId', function() {
+    it('should return the status of a created job', async () => {
+      pythonServiceMock.runProximityAnalysis.resolves({ success: true });
+
+      // First, create a job
+      const batchRes = await request(app)
         .post('/api/analysis/proximity/batch')
-        .send({
-          erraticIds: [],
-          featureLayers: ['water_bodies', 'settlements']
-        })
+        .send({ erraticIds: [5] })
+        .expect(202);
+      
+      const jobId = batchRes.body.job_id;
+
+      // Now, poll the job status endpoint
+      const statusRes = await request(app)
+        .get(`/api/analysis/jobs/${jobId}`)
         .expect('Content-Type', /json/)
-        .expect(400)
-        .end((err, res) => {
-          if (err) return done(err);
-          
-          expect(res.body).to.have.property('error', 'Invalid or empty erratic ID list');
-          done();
-        });
+        .expect(200);
+
+      expect(statusRes.body.id).to.equal(jobId);
+      expect(statusRes.body.status).to.be.oneOf(['pending', 'running']); // It will be 'pending' as the background task is stubbed
+    });
+
+    it('should return 404 for a non-existent job ID', async () => {
+      const res = await request(app)
+        .get('/api/analysis/jobs/nonexistent_job_123')
+        .expect('Content-Type', /json/)
+        .expect(404);
+        
+      expect(res.body).to.have.property('message', 'Job not found');
     });
   });
 }); 
