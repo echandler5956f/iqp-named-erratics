@@ -437,21 +437,45 @@ def run_full_pipeline(
         _parallel_run(lambda eid: run_classification(erratic_id=eid, update_db=update_db, verbose=verbose), erratic_ids, "Classification")
 
     if proximity_each:
-        # Use in-process calculation when single worker to avoid heavy subprocess overhead
-        # and to make debugging/profiling of a single proximity run easier if needed.
-        if max_workers == 1:
-            from proximity_analysis import calculate_proximity  # noqa: WPS433
+        # For proximity analysis, we must run in-process to share the heavy,
+        # cached data from the ProximityAnalyzer singleton. Spawning a new
+        # subprocess for each erratic would reload all datasets each time,
+        # leading to extreme memory usage and I/O, causing the process to hang.
+        # This approach initializes the analyzer once, then shares it across threads.
+        logger.info("Initializing Proximity Analyzer for parallel execution...")
+        from proximity_analysis import get_proximity_analyzer, calculate_proximity
+        get_proximity_analyzer() # Initialize singleton in the main thread
+        logger.info("Proximity Analyzer initialized.")
+        
+        def _proximity_worker(erratic_id: int) -> bool:
+            """Worker function to run proximity analysis in a thread."""
+            try:
+                # This call will re-use the globally cached analyzer
+                analysis_result = calculate_proximity(erratic_id)
+                if 'error' in analysis_result:
+                    logger.warning(
+                        "Proximity analysis for ID %s failed: %s",
+                        erratic_id, analysis_result['error']
+                    )
+                    return False
+                
+                if update_db and 'proximity_analysis' in analysis_result:
+                    from utils import db_utils
+                    success = db_utils.update_erratic_analysis_results(
+                        erratic_id, analysis_result['proximity_analysis']
+                    )
+                    if not success:
+                        logger.warning("DB update failed for proximity results of erratic ID %s", erratic_id)
+                
+                return True
+            except Exception as e:
+                logger.error(
+                    "An unexpected exception occurred in the proximity worker for erratic ID %s: %s",
+                    erratic_id, e, exc_info=True
+                )
+                return False
 
-            def _prox(eid):
-                res = calculate_proximity(eid)
-                if update_db and 'proximity_analysis' in res:
-                    from utils import db_utils  # local import to avoid early heavy deps
-                    db_utils.update_erratic_analysis_results(eid, res['proximity_analysis'])
-                return 'error' not in res
-
-            _parallel_run(_prox, erratic_ids, "Proximity analysis")
-        else:
-            _parallel_run(lambda eid: run_proximity_analysis(erratic_id=eid, update_db=update_db, verbose=verbose), erratic_ids, "Proximity analysis")
+        _parallel_run(_proximity_worker, erratic_ids, "Proximity analysis")
 
     logger.info("=== PIPELINE COMPLETE ===")
     return True
