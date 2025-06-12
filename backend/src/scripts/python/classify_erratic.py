@@ -109,15 +109,48 @@ class ErraticClassifier:
         if not text_corpus: raise ValueError("Empty text corpus for topic discovery.")
         preprocessed_corpus = [self.preprocess_text(text) for text in text_corpus if text.strip()]
         if not preprocessed_corpus: raise ValueError("Corpus empty after preprocessing.")
-        logger.info(f"Discovering topics on {len(preprocessed_corpus)} documents.")
+        n_docs = len(preprocessed_corpus)
+        logger.info(f"Discovering topics on {n_docs} documents.")
 
         if ADVANCED_TOPIC_MODELING:
             self.model_method = 'bertopic'
-            self.umap_model = UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric='cosine', random_state=42)
-            self.hdbscan_model = HDBSCAN(min_cluster_size=max(2, int(len(preprocessed_corpus)*0.01)), metric='euclidean', cluster_selection_method='eom', prediction_data=True)
-            self.topic_model = BERTopic(umap_model=self.umap_model, hdbscan_model=self.hdbscan_model, language="english", calculate_probabilities=True, nr_topics="auto", verbose=False)
+
+            # Step 1: Dynamically adjust UMAP parameters for small datasets.
+            # This is required as UMAP's n_neighbors cannot be >= number of samples.
+            n_neighbors = 15
+            n_components = 5
+            if n_docs < n_neighbors:
+                n_neighbors = max(2, n_docs - 1)
+                logger.warning(f"Low document count ({n_docs}). Adjusting UMAP n_neighbors to {n_neighbors}.")
+            
+            if n_components >= n_neighbors:
+                n_components = max(2, n_neighbors - 1)
+                logger.warning(f"Adjusting UMAP n_components to {n_components} to be less than n_neighbors.")
+
+            # Step 2: Disable automatic topic reduction for very small datasets to prevent a known crash.
+            # The IndexError occurs inside fit_transform if HDBSCAN finds no clusters to reduce.
+            nr_topics = "auto"
+            min_docs_for_auto_reduction = 20 # Empirically chosen threshold
+            if n_docs < min_docs_for_auto_reduction:
+                nr_topics = None
+                logger.warning(
+                    f"Low document count ({n_docs} < {min_docs_for_auto_reduction}). "
+                    f"Disabling 'auto' topic reduction (nr_topics=None) to prevent internal BERTopic error."
+                )
+
+            self.umap_model = UMAP(n_neighbors=n_neighbors, n_components=n_components, min_dist=0.0, metric='cosine', random_state=42)
+            self.hdbscan_model = HDBSCAN(min_cluster_size=max(2, int(n_docs*0.01)), metric='euclidean', cluster_selection_method='eom', prediction_data=True)
+            self.topic_model = BERTopic(umap_model=self.umap_model, hdbscan_model=self.hdbscan_model, language="english", calculate_probabilities=True, nr_topics=nr_topics, verbose=False)
+            
             topics, _ = self.topic_model.fit_transform(preprocessed_corpus)
+
+            # Step 3: Gracefully handle cases where no topics (besides the outlier topic) are found.
             topic_info = self.topic_model.get_topic_info()
+            if topic_info.empty or (len(topic_info) == 1 and topic_info.iloc[0]['Topic'] == -1):
+                logger.warning("BERTopic processing resulted in no topics being discovered. Returning empty result.")
+                self.topic_words = {}
+                return {"num_topics": 0, "topic_words": {}, "method": self.model_method}
+            
             self.topic_words = {int(topic_id): [word for word, _ in self.topic_model.get_topic(topic_id)] for topic_id in topic_info['Topic'] if topic_id >=0}
             return {"num_topics": len(self.topic_words), "topic_words": self.topic_words, "method": self.model_method}
         else:

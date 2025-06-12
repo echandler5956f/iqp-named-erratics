@@ -37,6 +37,14 @@ module.exports = {
     try {
       console.log('Starting rollback: Reverting Erratics.image_url to STRING');
       
+      // First, nullify any data that is too long to fit in VARCHAR(255)
+      // to prevent data truncation errors on rollback.
+      console.log('Nullifying long image_urls before changing column type...');
+      await queryInterface.sequelize.query(
+        `UPDATE "Erratics" SET "image_url" = NULL WHERE LENGTH("image_url") > 255;`,
+        { transaction }
+      );
+
       await queryInterface.changeColumn(
         'Erratics',
         'image_url',
