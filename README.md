@@ -395,4 +395,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Glacial erratic data sourced from various geological databases, historical records, and publications.
 - Mapping libraries and components from Leaflet.js and React-Leaflet.
-- Project goals influenced by the analysis requirements in `SpatialAnalysisMetaPrompt.md`.

@@ -102,6 +102,5 @@ The scripts use the following data directories relative to `backend/src/scripts/
 
 ## Further Documentation
 
-- See `SpatialAnalysisMetaPrompt.md` for detailed information about the analysis approach.
 - See `data_pipeline/README.md` for specifics on the data handling system.
 - Each script includes comprehensive documentation and help text (use `--help` flag when running from the command line). 
